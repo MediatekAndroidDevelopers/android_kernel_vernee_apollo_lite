@@ -9015,12 +9015,13 @@ static inline bool nohz_kick_needed(struct rq *rq)
 			&((struct hmp_domain *)hmp_cpu_domain(cpu))->cpus) >= nr_cpu_ids)
 		return false;
 #endif
-	if (rq->nr_running >= 2)
+	if (rq->nr_running >= 2 &&
+	    (!energy_aware() || cpu_overutilized(cpu)))
 		return true;
 
 	rcu_read_lock();
 	sd = rcu_dereference(per_cpu(sd_busy, cpu));
-	if (sd) {
+	if (sd && !energy_aware()) {
 		sgc = sd->groups->sgc;
 		nr_busy = atomic_read(&sgc->nr_busy_cpus);
 
