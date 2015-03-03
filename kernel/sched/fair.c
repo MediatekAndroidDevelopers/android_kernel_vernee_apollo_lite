@@ -7330,7 +7330,6 @@ static void update_cpu_capacity(struct sched_domain *sd, int cpu)
 	struct sched_group *sdg = sd->groups;
 
 	cpu_rq(cpu)->cpu_capacity_orig = capacity;
-	sdg->sgc->capacity_orig = capacity;
 
 	capacity *= scale_rt_capacity(cpu);
 	capacity >>= SCHED_CAPACITY_SHIFT;
@@ -7385,7 +7384,6 @@ void update_group_capacity(struct sched_domain *sd, int cpu)
 			 * causing divide-by-zero issues on boot.
 			 */
 			if (unlikely(!rq->sd)) {
-				capacity_orig += capacity_orig_of(cpu);
 				capacity += capacity_of(cpu);
 				continue;
 			}
