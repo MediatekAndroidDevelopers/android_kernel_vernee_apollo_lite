@@ -7297,16 +7297,6 @@ static inline int get_sd_load_idx(struct sched_domain *sd,
 	return load_idx;
 }
 
-static unsigned long default_scale_capacity(struct sched_domain *sd, int cpu)
-{
-	return SCHED_CAPACITY_SCALE;
-}
-
-unsigned long __weak arch_scale_freq_capacity(struct sched_domain *sd, int cpu)
-{
-	return default_scale_capacity(sd, cpu);
-}
-
 static unsigned long default_scale_cpu_capacity(struct sched_domain *sd, int cpu)
 {
 	if (sd && (sd->flags & SD_SHARE_CPUCAPACITY) && (sd->span_weight > 1))
