@@ -33,6 +33,8 @@ const struct cpumask *cpu_coregroup_mask(int cpu);
 #include <linux/cpufreq.h>
 #define arch_scale_freq_capacity cpufreq_scale_freq_capacity
 #endif
+#define arch_scale_cpu_capacity scale_cpu_capacity
+extern unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu);
 
 /* Extras of CPU & Cluster functions */
 extern int arch_cpu_is_big(unsigned int cpu);
