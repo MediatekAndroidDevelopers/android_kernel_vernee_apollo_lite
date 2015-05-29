@@ -1,8 +1,6 @@
 #ifndef __ASM_TOPOLOGY_H
 #define __ASM_TOPOLOGY_H
 
-#ifdef CONFIG_SMP
-
 #include <linux/cpumask.h>
 
 struct cpu_topology {
@@ -47,31 +45,6 @@ extern unsigned long cpufreq_scale_max_freq_capacity(int cpu);
 #endif
 #define arch_scale_cpu_capacity scale_cpu_capacity
 extern unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu);
-
-#else /* !CONFIG_ARM_CPU_TOPOLOGY */
-
-static inline void init_cpu_topology(void) { }
-static inline void store_cpu_topology(unsigned int cpuid) { }
-
-static inline int arch_cpu_is_big(unsigned int cpu) { return 0; }
-static inline int arch_cpu_is_little(unsigned int cpu) { return 1; }
-static inline int arch_is_multi_cluster(void) { return 0; }
-static inline int arch_is_smp(void) { return 1; }
-static inline int arch_get_nr_clusters(void) { return 1; }
-static inline int arch_get_cluster_id(unsigned int cpu) { return 0; }
-static inline void arch_get_cluster_cpus(struct cpumask *cpus, int cluster_id)
-{
-	cpumask_clear(cpus);
-	if (0 == cluster_id) {
-		unsigned int cpu;
-
-		for_each_possible_cpu(cpu)
-			cpumask_set_cpu(cpu, cpus);
-	}
-}
-static inline int arch_better_capacity(unsigned int cpu) { return 0; }
-
-#endif /* CONFIG_ARM_CPU_TOPOLOGY */
 
 #ifdef CONFIG_MTK_CPU_TOPOLOGY
 void arch_build_cpu_topology_domain(void);
