@@ -314,6 +314,8 @@ static void parse_dt_cpu_capacity(void)
 	}
 }
 
+static const struct sched_group_energy * const cpu_core_energy(int cpu);
+
 /*
  * Look for a customed capacity of a CPU in the cpu_capacity table during the
  * boot. The update of all CPUs is in O(n^2) for heteregeneous system but the
@@ -322,15 +324,12 @@ static void parse_dt_cpu_capacity(void)
  */
 static void update_cpu_capacity(unsigned int cpu)
 {
-	unsigned long capacity = cpu_capacity(cpu);
+	unsigned long capacity = SCHED_CAPACITY_SCALE;
 
-	if (!capacity || !max_cpu_perf) {
-		cpu_capacity(cpu) = 0;
-		return;
+	if (cpu_core_energy(cpu)) {
+		int max_cap_idx = cpu_core_energy(cpu)->nr_cap_states - 1;
+		capacity = cpu_core_energy(cpu)->cap_states[max_cap_idx].cap;
 	}
-
-	capacity *= SCHED_CAPACITY_SCALE;
-	capacity /= max_cpu_perf;
 
 	set_capacity_scale(cpu, capacity);
 }
@@ -805,4 +804,3 @@ void __init arch_get_hmp_domains(struct list_head *hmp_domains_list)
 #else
 void __init arch_get_hmp_domains(struct list_head *hmp_domains_list) {}
 #endif /* CONFIG_SCHED_HMP */
-
