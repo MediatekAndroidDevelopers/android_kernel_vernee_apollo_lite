@@ -27,7 +27,6 @@
 #include "sched.h"
 /* sched: kdb for sched/debug*/
 /* #define TEST_SCHED_DEBUG_ENHANCEMENT */
-/* #define MTK_SCHED_CMP_PRINT */
 #define TRYLOCK_NUM 10
 #include <linux/delay.h>
 
@@ -106,16 +105,8 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 #define PN(F) \
 	SEQ_printf(m, "  .%-30s: %lld.%06ld\n", #F, SPLIT_NS((long long)F))
 
-	if (!se) {
-		struct sched_avg *avg = &cpu_rq(cpu)->avg;
-		P(avg->runnable_avg_sum);
-		P(avg->avg_period);
-#ifdef MTK_SCHED_CMP_PRINT
-		P(avg->last_runnable_update);
-#endif
+	if (!se)
 		return;
-	}
-
 
 	PN(se->exec_start);
 	PN(se->vruntime);
@@ -971,9 +962,6 @@ static void print_cfs_group_stats_at_AEE(struct seq_file *m, int cpu, struct tas
 
 		P(avg->runnable_avg_sum);
 		P(avg->avg_period);
-#ifdef MTK_SCHED_CMP_PRINT
-		P(avg->last_runnable_update);
-#endif
 		return;
 	}
 
@@ -999,9 +987,6 @@ static void print_cfs_group_stats_at_AEE(struct seq_file *m, int cpu, struct tas
 	P(se->avg.avg_period);
 	P(se->avg.load_avg_contrib);
 	P(se->avg.decay_count);
-# ifdef MTK_SCHED_CMP_PRINT
-	P(se->last_runnable_update);
-# endif
 #endif
 #undef PN
 #undef P
