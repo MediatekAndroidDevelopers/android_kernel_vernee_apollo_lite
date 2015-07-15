@@ -224,7 +224,6 @@ struct task_group {
 
 #ifdef	CONFIG_SMP
 	atomic_long_t load_avg;
-	atomic_t runnable_avg;
 #endif
 #endif
 
@@ -345,31 +344,18 @@ struct cfs_rq {
 
 #ifdef CONFIG_SMP
 	/*
-	 * CFS Load tracking
-	 * Under CFS, load is tracked on a per-entity basis and aggregated up.
-	 * This allows for the description of both thread and group usage (in
-	 * the FAIR_GROUP_SCHED case).
-	 * runnable_load_avg is the sum of the load_avg_contrib of the
-	 * sched_entities on the rq.
-	 * blocked_load_avg is similar to runnable_load_avg except that its
-	 * the blocked sched_entities on the rq.
-	 * utilization_load_avg is the sum of the average running time of the
-	 * sched_entities on the rq.
-	 * utilization_blocked_avg is the utilization equivalent of
-	 * blocked_load_avg, i.e. the sum of running contributions of blocked
-	 * sched_entities associated with the rq.
+	 * CFS load tracking
 	 */
-	unsigned long runnable_load_avg, blocked_load_avg;
-	unsigned long utilization_load_avg, utilization_blocked_avg;
-	atomic64_t decay_counter;
-	u64 last_decay;
-	atomic_long_t removed_load, removed_utilization;
+	struct sched_avg avg;
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	unsigned long tg_load_avg_contrib;
+#endif
+	atomic_long_t removed_load_avg, removed_util_avg;
+#ifndef CONFIG_64BIT
+	u64 load_last_update_time_copy;
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	/* Required to track per-cpu representation of a task_group */
-	u32 tg_runnable_contrib;
-	unsigned long tg_load_contrib;
-
 	/*
 	 *   h_load = weight * f(tg)
 	 *
@@ -380,11 +366,6 @@ struct cfs_rq {
 	u64 last_h_load_update;
 	struct sched_entity *h_load_next;
 #endif /* CONFIG_FAIR_GROUP_SCHED */
-
-#ifdef CONFIG_SCHED_HMP
-	struct sched_avg avg;
-#endif
-
 #endif /* CONFIG_SMP */
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
