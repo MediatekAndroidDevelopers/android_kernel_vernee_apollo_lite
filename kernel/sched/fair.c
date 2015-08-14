@@ -2446,6 +2446,8 @@ static u32 __compute_runnable_contrib(u64 n)
 	return contrib + runnable_avg_yN_sum[n];
 }
 
+#define scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
+
 /*
  * We can represent the historical contribution to runnable average as the
  * coefficients of a geometric series.  To do this we sub-divide our runnable
@@ -2519,20 +2521,16 @@ __update_load_avg(u64 now, int cpu, struct sched_avg *sa,
 		 * period and accrue it.
 		 */
 		delta_w = 1024 - delta_w;
-		scaled_delta_w = (delta_w * scale_freq) >> SCHED_CAPACITY_SHIFT;
+		scaled_delta_w = scale(delta_w, scale_freq);
 		if (weight) {
 			sa->load_sum += weight * scaled_delta_w;
-			if (cfs_rq)
-				cfs_rq->runnable_load_sum += weight * scaled_delta_w;
+			if (cfs_rq) {
+				cfs_rq->runnable_load_sum +=
+						weight * scaled_delta_w;
+			}
 		}
 		if (running)
-			sa->util_sum += scaled_delta_w * scale_freq >> SCHED_CAPACITY_SHIFT;
-
-		mt_sched_printf(sched_lb_info,
-			"[%s] cpu=%d freq=%lu cap=%lu delta=%d scaled_delta_w=%d running_sum=%u runnable=%u period=%u",
-			__func__, cpu, scale_freq, scale_cpu, delta_w, scaled_delta_w,
-			sa->running_avg_sum, sa->runnable_avg_sum,
-			sa->avg_period);
+			sa->util_sum += scaled_delta_w;
 
 		delta -= delta_w;
 
@@ -2549,25 +2547,25 @@ __update_load_avg(u64 now, int cpu, struct sched_avg *sa,
 
 		/* Efficiently calculate \sum (1..n_period) 1024*y^i */
 		contrib = __compute_runnable_contrib(periods);
-		contrib = (contrib * scale_freq) >> SCHED_CAPACITY_SHIFT;
+		contrib = scale(contrib, scale_freq);
 		if (weight) {
 			sa->load_sum += weight * contrib;
 			if (cfs_rq)
 				cfs_rq->runnable_load_sum += weight * contrib;
 		}
 		if (running)
-			sa->util_sum += contrib * scale_freq >> SCHED_CAPACITY_SHIFT;
+			sa->util_sum += contrib;
 	}
 
 	/* Remainder of delta accrued against u_0` */
-	scaled_delta = (delta * scale_freq) >> SCHED_CAPACITY_SHIFT;
+	scaled_delta = scale(delta, scale_freq);
 	if (weight) {
 		sa->load_sum += weight * scaled_delta;
 		if (cfs_rq)
 			cfs_rq->runnable_load_sum += weight * scaled_delta;
 	}
 	if (running)
-		sa->util_sum += delta * scale_freq >> SCHED_CAPACITY_SHIFT;
+		sa->util_sum += scaled_delta;
 
 	sa->period_contrib += delta;
 
