@@ -4530,6 +4530,21 @@ static void hmp_online_cpu(int cpu) {}
 static void hmp_offline_cpu(int cpu) {}
 #endif /* CONFIG_SCHED_HMP */
 
+static unsigned long capacity_orig_of(int cpu);
+static int cpu_util(int cpu);
+
+static void update_capacity_of(int cpu)
+{
+	unsigned long req_cap;
+
+	if (!sched_freq())
+		return;
+
+	/* Convert scale-invariant capacity to cpu. */
+	req_cap = cpu_util(cpu) * SCHED_CAPACITY_SCALE / capacity_orig_of(cpu);
+	set_cfs_cpu_capacity(cpu, true, req_cap);
+}
+
 static bool cpu_overutilized(int cpu);
 
 /*
@@ -4582,6 +4597,20 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		if (!task_new && !rq->rd->overutilized &&
 		    cpu_overutilized(rq->cpu))
 			rq->rd->overutilized = true;
+
+		/*
+		 * We want to potentially trigger a freq switch
+		 * request only for tasks that are waking up; this is
+		 * because we get here also during load balancing, but
+		 * in these cases it seems wise to trigger as single
+		 * request after load balancing is done.
+		 *
+		 * XXX: how about fork()? Do we need a special
+		 *      flag/something to tell if we are here after a
+		 *      fork() (wakeup_task_new)?
+		 */
+		if (!task_new)
+			update_capacity_of(cpu_of(rq));
 	}
 	hrtick_update(rq);
 #ifdef CONFIG_HMP_TRACER
@@ -4649,6 +4678,21 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 #ifndef CONFIG_CFS_BANDWIDTH
 		BUG_ON(rq->cfs.nr_running > rq->cfs.h_nr_running);
 #endif
+
+		/*
+		 * We want to potentially trigger a freq switch
+		 * request only for tasks that are going to sleep;
+		 * this is because we get here also during load
+		 * balancing, but in these cases it seems wise to
+		 * trigger as single request after load balancing is
+		 * done.
+		 */
+		if (task_sleep) {
+			if (rq->cfs.nr_running)
+				update_capacity_of(cpu_of(rq));
+			else if (sched_freq())
+				set_cfs_cpu_capacity(cpu_of(rq), false, 0);
+		}
 	}
 	hrtick_update(rq);
 #ifdef CONFIG_HMP_TRACER
