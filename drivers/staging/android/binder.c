@@ -2235,7 +2235,10 @@ static void binder_transaction(struct binder_proc *proc,
 			if (tsk == NULL) {
 				spin_unlock_irqrestore(&target_wait->lock, flag);
 				is_lock = false;
-				wake_up_interruptible(target_wait);
+				if (reply || !(t->flags & TF_ONE_WAY))
+					wake_up_interruptible_sync(target_wait);
+				else
+					wake_up_interruptible(target_wait);
 				break;
 			}
 			if (!reply && (t->policy == SCHED_RR || t->policy == SCHED_FIFO)
@@ -2256,8 +2259,12 @@ static void binder_transaction(struct binder_proc *proc,
 			spin_unlock_irqrestore(&target_wait->lock, flag);
 	}
 #else
-	if (target_wait)
-		wake_up_interruptible(target_wait);
+	if (target_wait) {
+		if (reply || !(t->flags & TF_ONE_WAY))
+			wake_up_interruptible_sync(target_wait);
+		else
+			wake_up_interruptible(target_wait);
+	}
 #endif
 
 	return;
