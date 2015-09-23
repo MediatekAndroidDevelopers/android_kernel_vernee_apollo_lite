@@ -29,6 +29,11 @@ void init_cpu_topology(void);
 void store_cpu_topology(unsigned int cpuid);
 const struct cpumask *cpu_coregroup_mask(int cpu);
 
+#ifdef CONFIG_CPU_FREQ
+#include <linux/cpufreq.h>
+#define arch_scale_freq_capacity cpufreq_scale_freq_capacity
+#endif
+
 /* Extras of CPU & Cluster functions */
 extern int arch_cpu_is_big(unsigned int cpu);
 extern int arch_cpu_is_little(unsigned int cpu);
