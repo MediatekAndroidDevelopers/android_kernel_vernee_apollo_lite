@@ -180,7 +180,6 @@ asmlinkage void secondary_start_kernel(void)
 	 */
 	atomic_inc(&mm->mm_count);
 	current->active_mm = mm;
-	cpumask_set_cpu(cpu, mm_cpumask(mm));
 
 	aee_rr_rec_hotplug_footprint(cpu, 2);
 
@@ -329,13 +328,6 @@ int __cpu_disable(void)
 	migrate_irqs();
 
 	aee_rr_rec_hotplug_footprint(cpu, 73);
-
-	/*
-	 * Remove this CPU from the vm mask set of all processes.
-	 */
-	clear_tasks_mm_cpumask(cpu);
-
-	aee_rr_rec_hotplug_footprint(cpu, 74);
 
 	return 0;
 }
