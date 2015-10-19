@@ -427,6 +427,7 @@ void __init smp_cpus_done(unsigned int max_cpus)
 	pr_info("SMP: Total of %d processors activated (%lu.%02lu BogoMIPS).\n",
 			num_online_cpus(), bogosum / (500000/HZ),
 			(bogosum / (5000/HZ)) % 100);
+	setup_cpu_features();
 	apply_alternatives_all();
 }
 
