@@ -185,7 +185,6 @@ asmlinkage void secondary_start_kernel(void)
 	aee_rr_rec_hotplug_footprint(cpu, 2);
 
 	set_my_cpu_offset(per_cpu_offset(smp_processor_id()));
-	printk("CPU%u: Booted secondary processor\n", cpu);
 
 	aee_rr_rec_hotplug_footprint(cpu, 3);
 
@@ -244,6 +243,8 @@ asmlinkage void secondary_start_kernel(void)
 	 * the CPU migration code to notice that the CPU is online
 	 * before we continue.
 	 */
+	pr_info("CPU%u: Booted secondary processor [%08x]\n",
+					 cpu, read_cpuid_id());
 	set_cpu_online(cpu, true);
 
 	aee_rr_rec_hotplug_footprint(cpu, 12);
