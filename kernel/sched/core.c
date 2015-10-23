@@ -2162,6 +2162,10 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.avg.hmp_last_down_migration = 0;
 #endif /* CONFIG_SCHED_HMP */
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	p->se.cfs_rq			= NULL;
+#endif
+
 #ifdef CONFIG_SCHEDSTATS
 	memset(&p->se.statistics, 0, sizeof(p->se.statistics));
 #endif
