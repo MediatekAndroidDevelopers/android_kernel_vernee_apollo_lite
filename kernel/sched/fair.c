@@ -2722,13 +2722,7 @@ static inline void update_load_avg(struct sched_entity *se, int update_tg)
 	u64 now = cfs_rq_clock_task(cfs_rq);
 	int cpu = cpu_of(rq_of(cfs_rq));
 	long old_loadwop_avg = se->avg.loadwop_avg, loadwop_avg_delta;
-	unsigned long runnable_delta = 0;
-	unsigned long prev_load;
-	int on_rq_task = entity_is_task(se) && se->on_rq;
 
-	if (on_rq_task) {
-		prev_load = se_load(se);
-	}
 	/*
 	 * Track task load average for carrying it to new CPU after migrated, and
 	 * track group sched_entity load average for task_h_load calc in migration
@@ -2745,16 +2739,8 @@ static inline void update_load_avg(struct sched_entity *se, int update_tg)
 	if (update_cfs_rq_load_avg(now, cfs_rq) && update_tg)
 		update_tg_load_avg(cfs_rq, 0);
 
-	/* sched: add trace_sched */
 	if (entity_is_task(se))
-		trace_sched_task_entity_avg(1, task_of(se), &se->avg);
-
-	if (on_rq_task) {
-		runnable_delta = prev_load - se_load(se);
-#ifdef CONFIG_HMP_TRACER
-		trace_sched_cfs_load_update(task_of(se), se_load(se), runnable_delta, cpu);
-#endif
-	}
+		trace_sched_load_avg_task(task_of(se), &se->avg);
 }
 
 static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
