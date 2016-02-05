@@ -275,4 +275,11 @@ source "fs/dlm/Kconfig"
 source "fs/rawfs/Kconfig"
 source "fs/yaffs2/Kconfig"
 
+config DYNAMIC_FSYNC
+	bool "dynamic file sync control"
+	default n
+	help
+	  An experimental file sync control using pm suspend / resume drivers
+
+
 endmenu
