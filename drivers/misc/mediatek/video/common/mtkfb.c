@@ -190,7 +190,6 @@ static int vsync_cnt;
 /* local function declarations */
 /* --------------------------------------------------------------------------- */
 
-static int init_framebuffer(struct fb_info *info);
 static int mtkfb_get_overlay_layer_info(struct fb_overlay_layer_info *layerInfo);
 
 
@@ -1076,90 +1075,7 @@ static int mtkfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg
 		/* sem_early_suspend_cnt++; */
 		up(&sem_early_suspend);
 		return r;
-	}
-
-	case MTKFB_CAPTURE_FRAMEBUFFER:
-	{
-		unsigned long dst_pbuf = 0;
-		unsigned long *src_pbuf = 0;
-		unsigned int pixel_bpp = info->var.bits_per_pixel / 8;
-		unsigned int fbsize = DISP_GetScreenHeight() * DISP_GetScreenWidth() * pixel_bpp;
-
-		if (copy_from_user(&dst_pbuf, (void __user *)arg, sizeof(dst_pbuf))) {
-			MTKFB_LOG("[FB]: copy_from_user failed! line:%d\n", __LINE__);
-			r = -EFAULT;
-		} else {
-			src_pbuf = vmalloc(fbsize);
-			if (!src_pbuf) {
-				MTKFB_LOG("[FB]: vmalloc capture src_pbuf failed! line:%d\n", __LINE__);
-				r = -EFAULT;
-			} else {
-				dprec_logger_start(DPREC_LOGGER_WDMA_DUMP, 0, 0);
-				primary_display_capture_framebuffer_ovl((unsigned long)src_pbuf, eBGRA8888);
-				dprec_logger_done(DPREC_LOGGER_WDMA_DUMP, 0, 0);
-				if (copy_to_user((unsigned long *)dst_pbuf, src_pbuf, fbsize)) {
-					MTKFB_LOG("[FB]: copy_to_user failed! line:%d\n", __LINE__);
-					r = -EFAULT;
-				}
-				vfree(src_pbuf);
-			}
-		}
-
-		return r;
-	}
-
-	case MTKFB_SLT_AUTO_CAPTURE:
-	{
-		struct fb_slt_catpure capConfig;
-		char *dst_buffer;
-		unsigned int fb_size;
-
-		if (copy_from_user(&capConfig, (void __user *)arg, sizeof(capConfig))) {
-			MTKFB_LOG("[FB]: copy_from_user failed! line:%d\n", __LINE__);
-			r = -EFAULT;
-		} else {
-			unsigned int format;
-
-			switch (capConfig.format) {
-			case MTK_FB_FORMAT_RGB888:
-				format = eRGB888;
-				break;
-			case MTK_FB_FORMAT_BGR888:
-				format = eBGR888;
-				break;
-			case MTK_FB_FORMAT_ARGB8888:
-				format = eARGB8888;
-				break;
-			case MTK_FB_FORMAT_RGB565:
-				format = eRGB565;
-				break;
-			case MTK_FB_FORMAT_UYVY:
-				format = eYUV_420_2P_UYVY;
-				break;
-			case MTK_FB_FORMAT_ABGR8888:
-			default:
-				format = eABGR8888;
-				break;
-			}
-
-			dst_buffer = (char *)capConfig.outputBuffer;
-			fb_size = DISP_GetScreenWidth() * DISP_GetScreenHeight() * 4;
-			if (!capConfig.outputBuffer) {
-				MTKFB_LOG("[FB]: vmalloc capture outputBuffer failed! line:%d\n", __LINE__);
-				r = -EFAULT;
-			} else {
-				capConfig.outputBuffer = vmalloc(fb_size);
-				primary_display_capture_framebuffer_ovl((unsigned long)capConfig.outputBuffer, format);
-				if (copy_to_user(dst_buffer, (char *)capConfig.outputBuffer, fb_size)) {
-					MTKFB_LOG("[FB]: copy_to_user failed! line:%d\n", __LINE__);
-					r = -EFAULT;
-				}
-				vfree((char *)capConfig.outputBuffer);
-			}
-		}
-
-		return r;
-	}
+	}	
 
 	case MTKFB_GET_OVERLAY_LAYER_INFO:
 	{
@@ -1285,20 +1201,6 @@ static int mtkfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg
 		return 0;
 	}
 
-	case MTKFB_META_RESTORE_SCREEN:
-	{
-		struct fb_var_screeninfo var;
-
-		if (copy_from_user(&var, argp, sizeof(var)))
-			return -EFAULT;
-
-		info->var.yoffset = var.yoffset;
-		init_framebuffer(info);
-
-		return mtkfb_pan_display_impl(&var, info);
-	}
-
-
 	case MTKFB_GET_DEFAULT_UPDATESPEED:
 	{
 		unsigned int speed;
@@ -1405,7 +1307,6 @@ struct compat_fb_overlay_layer {
 #define COMPAT_MTKFB_CONFIG_IMMEDIATE_UPDATE	MTK_IOW(4, compat_ulong_t)
 
 #define COMPAT_MTKFB_GET_POWERSTATE		MTK_IOR(21, compat_ulong_t)
-#define COMPAT_MTKFB_META_RESTORE_SCREEN	MTK_IOW(101, compat_ulong_t)
 
 static void compat_convert(struct compat_fb_overlay_layer *compat_info,
 			   struct fb_overlay_layer *info)
@@ -1499,12 +1400,6 @@ static int mtkfb_compat_ioctl(struct fb_info *info, unsigned int cmd, unsigned l
 	{
 		arg = (unsigned long)compat_ptr(arg);
 		ret = mtkfb_ioctl(info, MTKFB_TRIG_OVERLAY_OUT, arg);
-		break;
-	}
-	case COMPAT_MTKFB_META_RESTORE_SCREEN:
-	{
-		arg = (unsigned long)compat_ptr(arg);
-		ret = mtkfb_ioctl(info, MTKFB_META_RESTORE_SCREEN, arg);
 		break;
 	}
 	case COMPAT_MTKFB_SET_OVERLAY_LAYER:
@@ -1763,22 +1658,6 @@ static void mtkfb_fbinfo_cleanup(struct mtkfb_device *fbdev)
 	(((x) &  0x7E0) << 5) |		\
 	(((x) & 0xF800) << 8) |		\
 	(0xFF << 24)) /* opaque */
-
-/* Init frame buffer content as 3 R/G/B color bars for debug */
-static int init_framebuffer(struct fb_info *info)
-{
-	void *buffer = info->screen_base + info->var.yoffset * info->fix.line_length;
-
-	/* clean whole frame buffer as black */
-	int size = info->var.xres_virtual * info->var.yres * info->var.bits_per_pixel/8;
-
-	/*memset_io(buffer, 0, info->screen_size)*/;
-
-	memset_io(buffer, 0, size);
-
-	return 0;
-}
-
 
 /**
  * Free driver resources. Can be called to rollback an aborted initialization
