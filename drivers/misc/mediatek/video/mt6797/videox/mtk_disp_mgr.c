@@ -1599,7 +1599,6 @@ long mtk_disp_mgr_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case DISP_IOCTL_PQ_SET_BYPASS_COLOR:
 	case DISP_IOCTL_PQ_SET_WINDOW:
 	case DISP_IOCTL_OD_CTL:
-	case DISP_IOCTL_WRITE_REG:
 	case DISP_IOCTL_READ_REG:
 	case DISP_IOCTL_MUTEX_CONTROL:
 	case DISP_IOCTL_PQ_GET_TDSHP_FLAG:
@@ -1766,7 +1765,6 @@ static long mtk_disp_mgr_compat_ioctl(struct file *file, unsigned int cmd,  unsi
 	case DISP_IOCTL_PQ_SET_BYPASS_COLOR:
 	case DISP_IOCTL_PQ_SET_WINDOW:
 	case DISP_IOCTL_OD_CTL:
-	case DISP_IOCTL_WRITE_REG:
 	case DISP_IOCTL_READ_REG:
 	case DISP_IOCTL_MUTEX_CONTROL:
 	case DISP_IOCTL_PQ_GET_TDSHP_FLAG:
