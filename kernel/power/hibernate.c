@@ -654,7 +654,7 @@ static void power_down(void)
  */
 int hibernate(void)
 {
-	int error;
+	int error, nr_calls = 0;
 
 	hib_log("entering hibernate()\n");
 
@@ -674,9 +674,11 @@ int hibernate(void)
 	}
 
 	pm_prepare_console();
-	error = pm_notifier_call_chain(PM_HIBERNATION_PREPARE);
-	if (error)
+	error = __pm_notifier_call_chain(PM_HIBERNATION_PREPARE, -1, &nr_calls);
+	if (error) {
+		nr_calls--;
 		goto Exit;
+	}
 
 	printk(KERN_INFO "PM: Syncing filesystems ... ");
 	sys_sync();
@@ -726,7 +728,7 @@ int hibernate(void)
 	/* Don't bother checking whether freezer_test_done is true */
 	freezer_test_done = false;
  Exit:
-	pm_notifier_call_chain(PM_POST_HIBERNATION);
+	__pm_notifier_call_chain(PM_POST_HIBERNATION, nr_calls, NULL);
 	pm_restore_console();
 	atomic_inc(&snapshot_device_available);
  Unlock:
@@ -752,7 +754,7 @@ int hibernate(void)
  */
 int software_resume(void)
 {
-	int error;
+	int error, nr_calls = 0;
 	unsigned int flags;
 
 	resume_attempted = 1;
@@ -847,9 +849,11 @@ int software_resume(void)
 	}
 
 	pm_prepare_console();
-	error = pm_notifier_call_chain(PM_RESTORE_PREPARE);
-	if (error)
+	error = __pm_notifier_call_chain(PM_RESTORE_PREPARE, -1, &nr_calls);
+	if (error) {
+		nr_calls--;
 		goto Close_Finish;
+	}
 
 	pr_debug("PM: Preparing processes for restore.\n");
 	error = freeze_processes();
@@ -875,7 +879,7 @@ int software_resume(void)
 	unlock_device_hotplug();
 	thaw_processes();
  Finish:
-	pm_notifier_call_chain(PM_POST_RESTORE);
+	__pm_notifier_call_chain(PM_POST_RESTORE, nr_calls, NULL);
 	pm_restore_console();
 	atomic_inc(&snapshot_device_available);
 	/* For success case, the suspend path will release the lock */
