@@ -123,6 +123,8 @@ SECTIONS
 #ifdef CONFIG_DEBUG_RODATA
 	. = ALIGN(1<<SECTION_SHIFT);
 #endif
+	_etext = .;			/* End of text section */
+
 	RO_DATA(PAGE_SIZE)
 
 	. = ALIGN(4);
@@ -160,8 +162,6 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 # endif
 #endif
-	_etext = .;			/* End of text and rodata section */
-
 #ifdef CONFIG_MTK_AEE_MRDUMP
 	.mrdump ALIGN (0x400): {
 	}
