@@ -1610,7 +1610,12 @@ select_task_rq_rt(struct task_struct *p, int cpu, int sd_flag, int flags)
 #endif
 		int target = find_lowest_rq(p);
 
-		if (target != -1)
+		/*
+		 * Possible race. Don't bother moving it if the
+		 * destination CPU is not running a lower priority task.
+		 */
+                if (target != -1 &&
+                    p->prio < cpu_rq(target)->rt.highest_prio.curr)
 			cpu = target;
 
 		mt_sched_printf(sched_rt_info, "2. select_task_rq_rt %d:%s to cpu=%d", p->pid, p->comm, cpu);
