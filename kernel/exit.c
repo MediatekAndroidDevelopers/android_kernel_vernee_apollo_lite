@@ -53,9 +53,13 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
+
+#include "sched/tune.h"
+
 #ifdef CONFIG_MTPROF
 #include "mt_cputime.h"
 #endif
+
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
@@ -720,6 +724,9 @@ void do_exit(long code)
 	}
 
 	exit_signals(tsk);  /* sets PF_EXITING */
+
+	schedtune_exit_task(tsk);
+
 	/*
 	 * tsk->flags are checked in the futex code to protect against
 	 * an exiting task cleaning up the robust pi futexes.
