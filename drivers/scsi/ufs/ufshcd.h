@@ -480,6 +480,9 @@ struct ufs_hba {
 	struct ufs_clk_scaling clk_scaling;
 	bool is_sys_suspended;
 
+	int			latency_hist_enabled;
+	struct io_latency_state io_lat_s;
+
 #ifdef CONFIG_MTK_UFS_BOOTING
 	u32 manu_id;               /* record vendor id for vendor-specific configurations */
 	unsigned int quirks;
