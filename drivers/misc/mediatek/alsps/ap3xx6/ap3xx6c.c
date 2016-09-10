@@ -203,6 +203,14 @@ static struct i2c_driver ap3xx6_i2c_driver = {
 	},
 };
 
+#ifdef CONFIG_POCKETMOD
+#include <linux/pocket_mod.h>
+#define POCKETMOD_DEBUG         0
+bool ap3xx6_ps_enabled = false;
+bool ap3xx6_irq_enabled = false;
+extern bool smartwake_switch;
+#endif
+
 static int ap3xx6_local_init(void);
 static int ap3xx6_remove(void);
 
@@ -381,7 +389,10 @@ static int ap3xx6_enable_ps(struct i2c_client *client, int enable)
 		}
 		if (0 == obj->hw->polling_mode_ps) {
 		#if defined(CONFIG_OF)
-			enable_irq(obj->irq);
+		        if (!ap3xx6_irq_enabled) {
+			        enable_irq(obj->irq);
+			        ap3xx6_irq_enabled = true;
+			}
 		#else
 			mt_eint_unmask(CUST_EINT_ALS_NUM);
 		#endif
@@ -411,6 +422,7 @@ static int ap3xx6_enable_ps(struct i2c_client *client, int enable)
 	#endif
 		#if defined(CONFIG_OF)
 			disable_irq_nosync(obj->irq);
+			ap3xx6_irq_enabled = false;
 		#else
 			mt_eint_mask(CUST_EINT_ALS_NUM);
 		#endif
@@ -705,6 +717,7 @@ static irqreturn_t ap3xx6_eint_handler(int irq, void *desc)
 	}
 
 	disable_irq_nosync(obj->irq);
+	ap3xx6_irq_enabled = false;
 	ap3xx6_eint_func();
 
 	return IRQ_HANDLED;
@@ -1001,10 +1014,12 @@ static int ap3xx6_get_ps_value(struct ap3xx6_priv *obj, u16 ps)
 			invalid = 1;
 		}
 	}
-
+#if POCKETMOD_DEBUG
+	APS_DBG("pocket_detection_check: %05d => %05d, invalid= %d\n", ps, val, invalid);
+#endif
 	if (!invalid) {
 		if (atomic_read(&obj->trace) & TRACE_DEBUG) {
-			APS_DBG("PS: %05d => %05d\n", ps, val);
+			APS_ERR("PS: %05d => %05d\n", ps, val);
 		}
 		return val;
 	} else{
@@ -1153,7 +1168,6 @@ static int ap3xx6_Calibration_every_time(struct i2c_client *client)
 	{
 		ap3xx6_enable_als(client,1);
 	}
-	
 	return 1;
 
 err_out:
@@ -1197,7 +1211,10 @@ static void ap3xx6_eint_work(struct work_struct *work)
 		}
 	}
 #if defined(CONFIG_OF)
-	enable_irq(obj->irq);
+        if (!ap3xx6_irq_enabled) {
+	        enable_irq(obj->irq);
+	        ap3xx6_irq_enabled = true;
+	}
 #else
 	mt_eint_unmask(CUST_EINT_ALS_NUM);
 #endif
@@ -1891,8 +1908,11 @@ static int ap3xx6_ps_enable_nodata(int en)
 		return -1;
 	}
 	value = en;
+#ifdef CONFIG_POCKETMOD
+	if (value && !ap3xx6_ps_enabled) {
+#else
 	if (value) {
-	
+#endif
 /*
 		err = ap3xx6_enable_ps(obj->client, 1);
 		if (err != 0) {
@@ -1922,7 +1942,15 @@ static int ap3xx6_ps_enable_nodata(int en)
 		if ((err == 0) && (ps_value > 0)) {
 			ps_report_interrupt_data(ps_value);
 		}
-	} else{
+#ifdef CONFIG_POCKETMOD
+#if POCKETMOD_DEBUG
+                APS_DBG("pocket_detection_check: activated sensor\n");
+#endif
+	        ap3xx6_ps_enabled = true;
+	} else if (ap3xx6_ps_enabled && !smartwake_switch) {
+#else
+	} else {
+#endif
 		err = ap3xx6_enable_ps(obj->client, 0);
 		if (err != 0) {
 			APS_ERR("disable ps fail: %d\n", err);
@@ -1930,11 +1958,40 @@ static int ap3xx6_ps_enable_nodata(int en)
 		}
 
 		clear_bit(CMC_BIT_PS, &obj->enable);
-
+#ifdef CONFIG_POCKETMOD
+#if POCKETMOD_DEBUG
+		APS_DBG("pocket_detection_check: de-activated sensor\n");
+#endif
+		ap3xx6_ps_enabled = false;
+#endif
 	}
 
 	return 0;
 }
+
+#ifdef CONFIG_POCKETMOD
+int ap3xx6_pocket_detection_check(void) {
+	struct ap3xx6_priv *obj = ap3xx6_obj;
+	int err = 0;
+	int prox_value = -1;
+        if (!ap3xx6_ps_enabled) {
+                ap3xx6_ps_enable_nodata(1);
+        }
+        
+	if (obj == NULL) {
+		APS_ERR("pocket_detection_check: ap3xx6_obj is null\n");
+		return 0;
+	}
+
+	err = ap3xx6_read_ps(obj->client, &obj->ps);
+	if (err != 0) {
+		APS_ERR("pocket_detection_check: ap3xx6_read_ps failed err=%d\n", err);
+		return 0;
+	}
+	prox_value = ap3xx6_get_ps_value(obj, obj->ps);
+	return prox_value == 0 ? 0 : 1; //ignore invalid state for now
+}
+#endif
 
 static int ap3xx6_ps_set_delay(u64 ns)
 {
