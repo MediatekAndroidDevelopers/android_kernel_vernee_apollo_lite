@@ -31,8 +31,7 @@
 #include <linux/hrtimer.h>
 #include <asm-generic/cputime.h>
 #include <linux/pocket_mod.h>
-
-extern bool display_off;
+#include <linux/input/smartwake.h>
 
 unsigned pocket_mod_switch = 1;
 

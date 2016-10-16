@@ -65,9 +65,8 @@ struct of_device_id touch_of_match[] = {
 };
 
 #ifdef CONFIG_TOUCHSCREEN_SMARTWAKE
-extern bool smartwake_switch;
+#include <linux/input/smartwake.h>
 bool display_off;
-EXPORT_SYMBOL(display_off);
 #endif
 
 void tpd_get_dts_info(void)

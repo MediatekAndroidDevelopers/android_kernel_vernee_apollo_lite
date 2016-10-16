@@ -46,12 +46,6 @@
 /* uncomment since no touchscreen defines android touch, do that here */
 //#define ANDROID_TOUCH_DECLARED
 
-/* Pocket_Mod Support */
-#ifdef CONFIG_POCKETMOD
-#include <linux/pocket_mod.h>
-static bool pocketed = false;
-#endif
-
 /* Version, author, desc, etc */
 #define DRIVER_AUTHOR "Dominik Baronelli aka DerTeufel1980 <dominik.baronelli@gmail.com>"
 #define DRIVER_DESCRIPTION "generic smartwake driver"
@@ -101,7 +95,6 @@ static int direction[3] = { 0 };
 static int key_value = 0;
 static bool touch_x_called = false, touch_y_called = false, direction_changed = false, onlyGesture = false;
 static bool exec_count = true;
-extern bool display_off;
 static bool scr_on_touch = false;
 #ifndef WAKE_HOOKS_DEFINED
 #ifndef CONFIG_HAS_EARLYSUSPEND
@@ -174,9 +167,6 @@ static void smartwake_reset(void) {
         end_x = 0;
         end_y = 0;
 	old_direction = 0;
-#ifdef CONFIG_POCKETMOD
-	pocketed = false;
-#endif
 	for (i = 0; i < 2; i++) {
 	        direction[i] = 0;
 	}
@@ -546,13 +536,6 @@ static void detect_smartwake(int x, int y)
 }
 
 static void smartwake_input_callback(struct work_struct *unused) {
-#ifdef CONFIG_POCKETMOD
-	if (device_is_pocketed()){
-	        pocketed = true;
-		return;
-	}
-	else
-#endif 
 	detect_smartwake(touch_x, touch_y);
 
 	return;
@@ -624,13 +607,7 @@ if(!display_off || !smartwake_switch > 0)
 		check_gesture();
 		return;
 	}
-	
-#ifdef CONFIG_POCKETMOD
-	if (pocketed) {
-	        return;
-	}
-#endif
-	
+
 	if (code == ABS_MT_POSITION_X) {
 		touch_x = value;
 		touch_x_called = true;
@@ -769,7 +746,6 @@ static ssize_t smartwake_smartwake_dump(struct device *dev,
 
 	return count;
 }
-EXPORT_SYMBOL(smartwake_switch);
 
 static DEVICE_ATTR(gesture, (S_IWUSR|S_IRUGO),
 	smartwake_smartwake_show, smartwake_smartwake_dump);

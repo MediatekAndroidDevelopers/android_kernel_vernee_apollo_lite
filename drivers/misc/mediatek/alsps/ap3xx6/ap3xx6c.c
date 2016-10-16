@@ -205,10 +205,10 @@ static struct i2c_driver ap3xx6_i2c_driver = {
 
 #ifdef CONFIG_POCKETMOD
 #include <linux/pocket_mod.h>
+#include <linux/input/smartwake.h>
 #define POCKETMOD_DEBUG         0
 bool ap3xx6_ps_enabled = false;
 bool ap3xx6_irq_enabled = false;
-extern bool smartwake_switch;
 #endif
 
 static int ap3xx6_local_init(void);

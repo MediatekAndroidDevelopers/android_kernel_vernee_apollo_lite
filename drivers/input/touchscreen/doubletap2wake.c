@@ -48,12 +48,8 @@
 
 /* if Smartwake is compiled it will already have taken care of this */
 #ifdef CONFIG_TOUCHSCREEN_SMARTWAKE
+#include <linux/input/smartwake.h>
 #define ANDROID_TOUCH_DECLARED
-#endif
-
-/* Pocket_Mod Support */
-#ifdef CONFIG_POCKETMOD
-#include <linux/pocket_mod.h>
 #endif
 
 /* Version, author, desc, etc */
@@ -81,7 +77,6 @@ static cputime64_t tap_time_pre = 0;
 static int touch_x = 0, touch_y = 0, touch_nr = 0, x_pre = 0, y_pre = 0;
 static bool touch_x_called = false, touch_y_called = false, touch_cnt = true;
 static bool exec_count = true;
-extern bool display_off;
 #ifndef WAKE_HOOKS_DEFINED
 #ifndef CONFIG_HAS_EARLYSUSPEND
 static struct notifier_block dt2w_lcd_notif;
@@ -196,12 +191,6 @@ static void detect_doubletap2wake(int x, int y, bool st)
 }
 
 static void dt2w_input_callback(struct work_struct *unused) {
-#ifdef CONFIG_POCKETMOD
-	if (device_is_pocketed()){
-		return;
-	}
-	else
-#endif
         detect_doubletap2wake(touch_x, touch_y, true);
 
 	return;

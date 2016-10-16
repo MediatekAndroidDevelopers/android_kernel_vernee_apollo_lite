@@ -24,6 +24,14 @@
 #include "gt9xx_config.h"
 #include <linux/i2c.h>
 
+#ifdef CONFIG_TOUCHSCREEN_SMARTWAKE
+#include <linux/input/smartwake.h>
+#endif
+
+#ifdef CONFIG_POCKETMOD
+#include <linux/pocket_mod.h>
+#endif
+
 #if TOUCH_FILTER
 static struct tpd_filter_t tpd_filter_local = TPD_FILTER_PARA;
 #endif
@@ -2279,6 +2287,11 @@ static void tpd_down(s32 x, s32 y, s32 size, s32 id)
 		return;
 	}
 #endif
+
+#if defined CONFIG_POCKETMOD && defined CONFIG_TOUCHSCREEN_SMARTWAKE
+	if (display_off && (device_is_pocketed() != 0)) return;
+#endif
+
 	if ((!size) && (!id)) {
 		input_report_abs(tpd->dev, ABS_MT_PRESSURE, 100);
 		input_report_abs(tpd->dev, ABS_MT_TOUCH_MAJOR, 100);

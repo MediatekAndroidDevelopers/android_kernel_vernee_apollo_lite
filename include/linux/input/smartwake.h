@@ -24,6 +24,7 @@
 
 extern int smartwake_switch;
 extern bool smartwake_scr_suspended;
+extern bool display_off;
 
 void smartwake_setdev(struct input_dev *);
 
