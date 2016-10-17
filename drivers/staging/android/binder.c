@@ -298,6 +298,7 @@ struct binder_transaction_log_entry {
 	struct timespec readstamp;
 	struct timespec endstamp;
 #endif
+	const char *context_name;
 };
 struct binder_transaction_log {
 	int next;
@@ -361,10 +362,12 @@ static struct binder_transaction_log_entry entry_t[MAX_ENG_TRANS_LOG_BUFF_LEN];
 struct binder_context {
 	struct binder_node *binder_context_mgr_node;
 	kuid_t binder_context_mgr_uid;
+	const char *name;
 };
 
 static struct binder_context global_context = {
 	.binder_context_mgr_uid = INVALID_UID,
+	.name = "binder",
 };
 
 struct binder_work {
@@ -2443,6 +2446,7 @@ static void binder_transaction(struct binder_proc *proc,
 	/* consider time zone. translate to android time */
 	e->tv.tv_sec -= (sys_tz.tz_minuteswest * 60);
 #endif
+	e->context_name = proc->context->name;
 
 	if (reply) {
 		in_reply_to = thread->transaction_stack;
@@ -4494,9 +4498,17 @@ static int binder_open(struct inode *nodp, struct file *filp)
 		char strbuf[11];
 
 		snprintf(strbuf, sizeof(strbuf), "%u", proc->pid);
+		/*
+		 * proc debug entries are shared between contexts, so
+		 * this will fail if the process tries to open the driver
+		 * again with a different context. The priting code will
+		 * anyway print all contexts that a given PID has, so this
+		 * is not a problem.
+		 */
 		proc->debugfs_entry = debugfs_create_file(strbuf, S_IRUGO,
-							  binder_debugfs_dir_entry_proc,
-							  proc, &binder_proc_fops);
+			binder_debugfs_dir_entry_proc,
+			(void *)(unsigned long)proc->pid,
+			&binder_proc_fops);
 	}
 
 	return 0;
@@ -4977,6 +4989,7 @@ static void print_binder_proc(struct seq_file *m, struct binder_proc *proc, int 
 	size_t header_pos;
 
 	seq_printf(m, "proc %d\n", proc->pid);
+	seq_printf(m, "context %s\n", proc->context->name);
 	header_pos = m->count;
 
 	for (n = rb_first(&proc->threads); n != NULL; n = rb_next(n))
@@ -5089,6 +5102,7 @@ static void print_binder_proc_stats(struct seq_file *m, struct binder_proc *proc
 	int count, strong, weak;
 
 	seq_printf(m, "proc %d\n", proc->pid);
+	seq_printf(m, "context %s\n", proc->context->name);
 	count = 0;
 	for (n = rb_first(&proc->threads); n != NULL; n = rb_next(n))
 		count++;
@@ -5195,27 +5209,18 @@ static int binder_transactions_show(struct seq_file *m, void *unused)
 static int binder_proc_show(struct seq_file *m, void *unused)
 {
 	struct binder_proc *itr;
-	struct binder_proc *proc = m->private;
+	int pid = (unsigned long)m->private;
 	int do_lock = !binder_debug_no_lock;
-	bool valid_proc = false;
 
 	if (do_lock)
 		binder_lock(__func__);
 
 	hlist_for_each_entry(itr, &binder_procs, proc_node) {
-		if (itr == proc) {
-			valid_proc = true;
-			break;
+		if (itr->pid == pid) {
+			seq_puts(m, "binder proc state:\n");
+			print_binder_proc(m, itr, 1);
 		}
 	}
-	if (valid_proc) {
-		seq_puts(m, "binder proc state:\n");
-		print_binder_proc(m, proc, 1);
-	}
-#ifdef MTK_BINDER_DEBUG
-	else
-		pr_debug("show proc addr 0x%p exit\n", proc);
-#endif
 	if (do_lock)
 		binder_unlock(__func__);
 	return 0;
@@ -5280,11 +5285,11 @@ static void print_binder_transaction_log_entry(struct seq_file *m, struct
 			  NSEC_PER_MSEC) : (sub_read_t.tv_nsec % NSEC_PER_MSEC));
 #else
 	seq_printf(m,
-		   "%d: %s from %d:%d to %d:%d node %d handle %d size %d:%d\n",
+		   "%d: %s from %d:%d to %d:%d context %s node %d handle %d size %d:%d\n",
 		   e->debug_id, (e->call_type == 2) ? "reply" :
 		   ((e->call_type == 1) ? "async" : "call "), e->from_proc,
-		   e->from_thread, e->to_proc, e->to_thread, e->to_node,
-		   e->target_handle, e->data_size, e->offsets_size);
+			 e->from_thread, e->to_proc, e->to_thread, e->context_name,
+			 e->to_node, e->target_handle, e->data_size, e->offsets_size);
 #endif
 }
 
