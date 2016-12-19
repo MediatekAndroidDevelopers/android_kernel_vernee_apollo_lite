@@ -19,7 +19,7 @@
 #include <linux/gpio.h>
 
 #include <linux/spi/spi.h>
-#include <../../../../../../kernel-3.18/drivers/spi/mediatek/mt6797/mt_spi.h>
+#include <../../../../../drivers/spi/mediatek/mt6797/mt_spi.h>
 
 /*#define FP_SPI_DEBUG*/
 #define FP_SPI_DEBUG
