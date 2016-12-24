@@ -400,7 +400,8 @@ KBUILD_CPPFLAGS := -D__KERNEL__
 
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
-		   -Werror-implicit-function-declaration \
+                   -mtune=cortex-a53 \
+                   -march=armv8-a \
 		   -Wno-format-security \
 		   -std=gnu89
 
