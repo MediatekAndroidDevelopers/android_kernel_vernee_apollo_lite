@@ -30,6 +30,10 @@
 #endif
 #endif
 
+#ifdef CONFIG_INPUT_HALL_COVER
+#include <linux/input/hall.h>
+#endif
+
 #define KPD_NAME	"mtk-kpd"
 #define MTK_KP_WAKESOURCE	/* this is for auto set wake up source */
 
@@ -872,6 +876,10 @@ static int kpd_pdrv_probe(struct platform_device *pdev)
 #ifdef CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE
 	doubletap2wake_setdev(kpd_input_dev);
 #endif
+#endif
+
+#ifdef CONFIG_INPUT_HALL_COVER
+	hall_setdev(kpd_input_dev);
 #endif
 
 #ifdef KPD_KEY_MAP
