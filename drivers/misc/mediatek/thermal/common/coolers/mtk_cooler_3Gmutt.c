@@ -77,6 +77,7 @@ ssize_t mddulthro_pid_write(struct file *file, const char __user *buf, size_t le
 	int ret = 0;
 	char tmp[MAX_LEN] = { 0 };
 
+	len = (len < (MAX_LEN-1)) ? len : MAX_LEN-1;
 	/* write data to the buffer */
 	if (copy_from_user(tmp, buf, len))
 		return -EFAULT;

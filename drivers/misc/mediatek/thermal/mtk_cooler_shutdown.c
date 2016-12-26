@@ -78,7 +78,10 @@ static ssize_t _mtk_cl_sd_rst_write(struct file *filp, const char __user *buf, s
 	int ret = 0;
 	char tmp[MAX_LEN] = { 0 };
 
+
 	len = (len < (MAX_LEN - 1)) ? len : (MAX_LEN - 1);
+
+
 	/* write data to the buffer */
 	if (copy_from_user(tmp, buf, len))
 		return -EFAULT;
@@ -129,7 +132,10 @@ static ssize_t _mtk_cl_sd_pid_write(struct file *filp, const char __user *buf, s
 	int ret = 0;
 	char tmp[MAX_LEN] = { 0 };
 
+
+
 	len = (len < (MAX_LEN - 1)) ? len : (MAX_LEN - 1);
+
 	/* write data to the buffer */
 	if (copy_from_user(tmp, buf, len))
 		return -EFAULT;
@@ -171,7 +177,10 @@ static ssize_t _mtk_cl_sd_debouncet_write(struct file *filp, const char __user *
 	char desc[MAX_LEN] = { 0 };
 	int tmp_dbt = -1;
 
+
 	len = (len < (MAX_LEN - 1)) ? len : (MAX_LEN - 1);
+
+
 	/* write data to the buffer */
 	if (copy_from_user(desc, buf, len))
 		return -EFAULT;

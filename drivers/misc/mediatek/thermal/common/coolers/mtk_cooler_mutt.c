@@ -199,6 +199,9 @@ static ssize_t clmutt_tmd_pid_write(struct file *filp, const char __user *buf, s
 	int ret = 0;
 	char tmp[MAX_LEN] = { 0 };
 
+
+	len = (len < (MAX_LEN-1)) ? len : MAX_LEN-1;
+
 	/* write data to the buffer */
 	if (copy_from_user(tmp, buf, len))
 		return -EFAULT;
@@ -295,6 +298,9 @@ static ssize_t clmutt_tm_pid_write(struct file *filp, const char __user *buf, si
 {
 	int ret = 0;
 	char tmp[MAX_LEN] = {0};
+
+
+	len = (len < (MAX_LEN-1)) ? len : MAX_LEN-1;
 
 	/* write data to the buffer */
 	if (copy_from_user(tmp, buf, len))
