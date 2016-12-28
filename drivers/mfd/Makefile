@@ -2,6 +2,8 @@
 # Makefile for multifunction miscellaneous devices
 #
 
+subdir-ccflags-y += -Werror
+
 88pm860x-objs			:= 88pm860x-core.o 88pm860x-i2c.o
 obj-$(CONFIG_MFD_88PM860X)	+= 88pm860x.o
 obj-$(CONFIG_MFD_88PM800)	+= 88pm800.o 88pm80x.o
@@ -177,3 +179,5 @@ obj-$(CONFIG_MFD_HI6421_PMIC)	+= hi6421-pmic-core.o
 
 intel-soc-pmic-objs		:= intel_soc_pmic_core.o intel_soc_pmic_crc.o
 obj-$(CONFIG_INTEL_SOC_PMIC)	+= intel-soc-pmic.o
+obj-$(CONFIG_MFD_MT6323)	+= mt6323-core.o
+obj-$(CONFIG_MFD_MT6397)	+= mt6397-core.o

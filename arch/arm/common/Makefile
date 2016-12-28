@@ -2,8 +2,11 @@
 # Makefile for the linux kernel.
 #
 
+subdir-ccflags-y += -Werror
+
 obj-y				+= firmware.o
 
+obj-$(CONFIG_FIQ_GLUE)		+= fiq_glue.o fiq_glue_setup.o
 obj-$(CONFIG_ICST)		+= icst.o
 obj-$(CONFIG_SA1111)		+= sa1111.o
 obj-$(CONFIG_DMABOUNCE)		+= dmabounce.o

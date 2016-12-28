@@ -32,6 +32,7 @@
 #include <drm/drm_core.h>
 #include "drm_legacy.h"
 #include "drm_internal.h"
+#include "drm_crtc_internal.h"
 
 #include <linux/pci.h>
 #include <linux/export.h>
@@ -320,6 +321,9 @@ static int drm_getcap(struct drm_device *dev, void *data, struct drm_file *file_
 		else
 			req->value = 64;
 		break;
+	case DRM_CAP_ADDFB2_MODIFIERS:
+		req->value = dev->mode_config.allow_fb_modifiers;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -343,6 +347,17 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 	case DRM_CLIENT_CAP_UNIVERSAL_PLANES:
 		if (req->value > 1)
 			return -EINVAL;
+		file_priv->universal_planes = req->value;
+		break;
+	case DRM_CLIENT_CAP_ATOMIC:
+		/* for now, hide behind experimental drm.atomic moduleparam */
+		if (!drm_atomic)
+			return -EINVAL;
+		if (!drm_core_check_feature(dev, DRIVER_ATOMIC))
+			return -EINVAL;
+		if (req->value > 1)
+			return -EINVAL;
+		file_priv->atomic = req->value;
 		file_priv->universal_planes = req->value;
 		break;
 	default:
@@ -620,6 +635,9 @@ static const struct drm_ioctl_desc drm_ioctls[] = {
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_OBJ_GETPROPERTIES, drm_mode_obj_get_properties_ioctl, DRM_CONTROL_ALLOW|DRM_UNLOCKED),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_OBJ_SETPROPERTY, drm_mode_obj_set_property_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CURSOR2, drm_mode_cursor2_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ATOMIC, drm_mode_atomic_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATEPROPBLOB, drm_mode_createblob_ioctl, DRM_CONTROL_ALLOW|DRM_UNLOCKED),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DESTROYPROPBLOB, drm_mode_destroyblob_ioctl, DRM_CONTROL_ALLOW|DRM_UNLOCKED),
 };
 
 #define DRM_CORE_IOCTL_COUNT	ARRAY_SIZE( drm_ioctls )
@@ -648,6 +666,7 @@ long drm_ioctl(struct file *filp,
 	char stack_kdata[128];
 	char *kdata = NULL;
 	unsigned int usize, asize;
+	int flags;
 
 	dev = file_priv->minor->dev;
 
@@ -686,6 +705,15 @@ long drm_ioctl(struct file *filp,
 		  (long)old_encode_dev(file_priv->minor->kdev->devt),
 		  file_priv->authenticated, ioctl->name);
 
+	flags = ioctl->flags;
+	if (drm_master_relax) {
+		if (nr == DRM_IOCTL_NR(DRM_IOCTL_SET_MASTER))
+			flags = DRM_AUTH;
+		else if (nr == DRM_IOCTL_NR(DRM_IOCTL_DROP_MASTER))
+			flags = DRM_MASTER;
+	}
+
+
 	/* Do not trust userspace, use our own definition */
 	func = ioctl->func;
 
@@ -695,7 +723,7 @@ long drm_ioctl(struct file *filp,
 		goto err_i1;
 	}
 
-	retcode = drm_ioctl_permit(ioctl->flags, file_priv);
+	retcode = drm_ioctl_permit(flags, file_priv);
 	if (unlikely(retcode))
 		goto err_i1;
 
@@ -723,7 +751,7 @@ long drm_ioctl(struct file *filp,
 		memset(kdata, 0, usize);
 	}
 
-	if (ioctl->flags & DRM_UNLOCKED)
+	if (flags & DRM_UNLOCKED)
 		retcode = func(dev, kdata, file_priv);
 	else {
 		mutex_lock(&drm_global_mutex);
