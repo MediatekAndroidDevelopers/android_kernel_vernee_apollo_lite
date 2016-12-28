@@ -1086,7 +1086,7 @@ static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
 		if (likely(rt_b->rt_runtime)) {
 			rt_rq->rt_throttled = 1;
 			/* sched:print throttle every time*/
-			printk_deferred("sched: RT throttling activated\n");
+			printk_deferred("sched: RT throttling activated cpu\n");
 #ifdef CONFIG_RT_GROUP_SCHED
 			mt_sched_printf(sched_rt_info, "cpu=%d rt_throttled=%d",
 					cpu, rt_rq->rt_throttled);
