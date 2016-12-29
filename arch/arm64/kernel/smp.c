@@ -253,24 +253,20 @@ asmlinkage void secondary_start_kernel(void)
 
 	aee_rr_rec_hotplug_footprint(cpu, 13);
 
-	local_dbg_enable();
+	local_irq_enable();
 
 	aee_rr_rec_hotplug_footprint(cpu, 14);
 
-	local_irq_enable();
-
-	aee_rr_rec_hotplug_footprint(cpu, 15);
-
 	local_async_enable();
 
-	aee_rr_rec_hotplug_footprint(cpu, 16);
+	aee_rr_rec_hotplug_footprint(cpu, 15);
 
 	/*
 	 * OK, it's off to the idle thread for us
 	 */
 	cpu_startup_entry(CPUHP_ONLINE);
 
-	aee_rr_rec_hotplug_footprint(cpu, 17);
+	aee_rr_rec_hotplug_footprint(cpu, 16);
 }
 
 #ifdef CONFIG_HOTPLUG_CPU

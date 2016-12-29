@@ -240,13 +240,20 @@ int xt_register_matches(struct xt_match *match, unsigned int n);
 void xt_unregister_matches(struct xt_match *match, unsigned int n);
 
 int xt_check_entry_offsets(const void *base, const char *elems,
-                           unsigned int target_offset,
-                           unsigned int next_offset);
+			   unsigned int target_offset,
+			   unsigned int next_offset);
+
+unsigned int *xt_alloc_entry_offsets(unsigned int size);
+bool xt_find_jump_offset(const unsigned int *offsets,
+			 unsigned int target, unsigned int size);
 
 int xt_check_match(struct xt_mtchk_param *, unsigned int size, u_int8_t proto,
 		   bool inv_proto);
 int xt_check_target(struct xt_tgchk_param *, unsigned int size, u_int8_t proto,
 		    bool inv_proto);
+void *xt_copy_counters_from_user(const void __user *user, unsigned int len,
+				 struct xt_counters_info *info, bool compat);
+
 void *xt_copy_counters_from_user(const void __user *user, unsigned int len,
 				 struct xt_counters_info *info, bool compat);
 
@@ -438,8 +445,8 @@ void xt_compat_target_from_user(struct xt_entry_target *t, void **dstptr,
 int xt_compat_target_to_user(const struct xt_entry_target *t,
 			     void __user **dstptr, unsigned int *size);
 int xt_compat_check_entry_offsets(const void *base, const char *elems,
-                                  unsigned int target_offset,
-                                  unsigned int next_offset);
+				  unsigned int target_offset,
+				  unsigned int next_offset);
 
 #endif /* CONFIG_COMPAT */
 #endif /* _X_TABLES_H */
