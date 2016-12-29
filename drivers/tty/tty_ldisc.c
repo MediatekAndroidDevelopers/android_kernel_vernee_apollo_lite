@@ -428,7 +428,7 @@ static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
 	up_write(&tty->termios_rwsem);
 
 	tty->disc_data = NULL;
-	tty->receive_room = 0;
+	tty->receive_room = 0; //M: may need get removed, back old solution
 }
 
 /**

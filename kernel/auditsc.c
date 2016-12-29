@@ -76,6 +76,7 @@
 #include <linux/uaccess.h>
 #include <uapi/linux/limits.h>
 
+#include <linux/uaccess.h>
 #include "audit.h"
 
 /* flags stating the success for a syscall */
@@ -1179,6 +1180,7 @@ static void audit_log_execve_info(struct audit_context *context,
 			encode = false;
 		}
 	} while (arg < context->execve.argc);
+
 
 	/* NOTE: the caller handles the final audit_log_end() call */
 
