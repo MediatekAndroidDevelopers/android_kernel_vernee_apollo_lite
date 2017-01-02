@@ -100,6 +100,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1391000000>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 		};
 
 		cpu1: cpu@001 {
@@ -111,6 +112,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1391000000>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 		};
 
 		cpu2: cpu@002 {
@@ -122,6 +124,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1391000000>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 		};
 
 		cpu3: cpu@003 {
@@ -133,6 +136,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1391000000>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 		};
 
 		cpu4: cpu@100 {
@@ -144,6 +148,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1950000000>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 		};
 
 		cpu5: cpu@101 {
@@ -155,6 +160,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1950000000>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 		};
 
 		cpu6: cpu@102 {
@@ -166,6 +172,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1950000000>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 		};
 
 		cpu7: cpu@103 {
@@ -177,6 +184,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <1950000000>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 		};
 
 		cpu8: cpu@200 {
@@ -188,6 +196,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <2288000000>;
+			sched-energy-costs = <&CPU_COST_2 &CLUSTER_COST_2>;
 		};
 
 		cpu9: cpu@201 {
@@ -199,6 +208,7 @@
 					  <&cpu_sleep_0_0 &cpu_sleep_0_0 &cpu_sleep_0_0>;
 			cpu-release-addr = <0x0 0x40000200>;
 			clock-frequency = <2288000000>;
+			sched-energy-costs = <&CPU_COST_2 &CLUSTER_COST_2>;
 		};
 
 		cpu-map {
@@ -272,6 +282,8 @@
 			};
 
 		};
+
+		/include/ "mt6797-sched-energy.dtsi"
 
 	};
 
