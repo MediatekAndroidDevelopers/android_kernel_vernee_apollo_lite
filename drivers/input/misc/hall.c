@@ -16,8 +16,6 @@ Aka.jiang    2013-12-14    Init    aka.jiang@hotmail.com
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 
-#include <linux/delay.h>
-#include <linux/input/hall.h>
 
 #define HALL_NAME "cover"
 
@@ -52,38 +50,17 @@ struct hall_info {
 	unsigned int debug_mask;
 };
 
-static struct input_dev * hall_pwrdev;
-static DEFINE_MUTEX(pwrkeyworklock);
-
-/* PowerKey setter */
-void hall_setdev(struct input_dev * input_device) {
-	hall_pwrdev = input_device;
-	HALL_DEBUG_LOG("set hall_pwrdev: %s\n", hall_pwrdev->name);
-}
 
 static void hall_work(struct work_struct *work)
 {
     struct hall_info *info = container_of(work, struct hall_info, work);
-    int state, key_code;
+    int state;
 
     state = !!gpio_get_value(info->irq_gpio);
-    if (state == 0) { // cover closed
-	key_code = KEY_F2; //doze to display clock
-    } else {
-	key_code = KEY_F3; // power on
-    }
 
     HALL_DEBUG_LOG("state = %d", state);
     input_report_switch(info->idev, info->sw_code, state);
     input_sync(info->idev);
-    if (mutex_trylock(&pwrkeyworklock)) {
-    	input_event(hall_pwrdev, EV_KEY, key_code, 1);
-    	input_event(hall_pwrdev, EV_SYN, 0, 0);
-    	msleep(60);
-    	input_event(hall_pwrdev, EV_KEY, key_code, 0);
-    	input_event(hall_pwrdev, EV_SYN, 0, 0);
-	mutex_unlock(&pwrkeyworklock);
-    }
     enable_irq(info->irq);
 }
 
@@ -179,8 +156,6 @@ static int hall_probe(struct platform_device *pdev)
     sprintf(pyhs_str, "%s/input0", input->name);
     input->phys = pyhs_str;
     input_set_capability(input, EV_SW, info->sw_code);
-    input_set_capability(hall_pwrdev, EV_KEY, KEY_F2);
-    input_set_capability(hall_pwrdev, EV_KEY, KEY_F3);
 
     HALL_DEBUG_LOG("sw_code = 0x%x\n", info->sw_code);
     HALL_DEBUG_LOG("name = %s", info->name);
