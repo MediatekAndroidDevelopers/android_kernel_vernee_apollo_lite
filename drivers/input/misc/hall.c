@@ -59,7 +59,7 @@ static void hall_work(struct work_struct *work)
     state = !!gpio_get_value(info->irq_gpio);
 
     HALL_DEBUG_LOG("state = %d", state);
-    input_report_switch(info->idev, info->sw_code, state);
+    input_report_switch(info->idev, info->sw_code, !state);
     input_sync(info->idev);
     enable_irq(info->irq);
 }
@@ -149,7 +149,7 @@ static int hall_probe(struct platform_device *pdev)
     }
 
     info->idev = input;
-    info->sw_code = 12;
+    info->sw_code = SW_LID;
     info->name = HALL_NAME;
     input->name = info->name;
     
