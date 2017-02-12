@@ -581,7 +581,7 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 	}
 
 	if (IS_ERR(buffer)) {
-		IONMSG("%s buffer is error 0x%p.\n", __func__, buffer);
+		IONMSG("%s buffer is error 0x%pK.\n", __func__, buffer);
 		return ERR_CAST(buffer);
 	}
 
@@ -594,7 +594,7 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 	ion_buffer_put(buffer);
 
 	if (IS_ERR(handle)) {
-		IONMSG("%s handle is error 0x%p.\n", __func__, handle);
+		IONMSG("%s handle is error 0x%pK.\n", __func__, handle);
 		return handle;
 	}
 
@@ -689,7 +689,7 @@ static void *ion_buffer_kmap_get(struct ion_buffer *buffer)
 			"heap->ops->map_kernel should return ERR_PTR on error"))
 		return ERR_PTR(-EINVAL);
 	if (IS_ERR(vaddr)) {
-		IONMSG("%s map kernel is failed addr = 0x%p.\n", __func__, vaddr);
+		IONMSG("%s map kernel is failed addr = 0x%pK.\n", __func__, vaddr);
 		return vaddr;
 	}
 	buffer->vaddr = vaddr;
@@ -708,7 +708,7 @@ static void *ion_handle_kmap_get(struct ion_handle *handle)
 	}
 	vaddr = ion_buffer_kmap_get(buffer);
 	if (IS_ERR(vaddr)) {
-		IONMSG("%s vadd is error 0x%p.\n", __func__, vaddr);
+		IONMSG("%s vadd is error 0x%pK.\n", __func__, vaddr);
 		return vaddr;
 	}
 	handle->kmap_cnt++;
@@ -841,7 +841,7 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
 			names[id] = buffer->heap->name;
 		sizes[id] += buffer->size;
 
-		seq_printf(s, "%16.s %3d %8zu %3d %p %p.\n", buffer->heap->name,
+		seq_printf(s, "%16.s %3d %8zu %3d %pK %pK.\n", buffer->heap->name,
 						client->pid, buffer->size, buffer->handle_count, handle, buffer);
 	}
 	mutex_unlock(&client->lock);
@@ -991,7 +991,7 @@ void ion_client_destroy(struct ion_client *client)
 		struct ion_handle *handle = rb_entry(n, struct ion_handle,
 						     node);
 		mutex_lock(&client->lock);
-		pr_err_ratelimited("[ION]warning: release handle @ client destroy: handle=%p, buf=%p, ref=%d, size=%zu, kmap=%d\n",
+		pr_err_ratelimited("[ION]warning: release handle @ client destroy: handle=%pK, buf=%pK, ref=%d, size=%zu, kmap=%d\n",
 				handle, handle->buffer, atomic_read(&handle->buffer->ref.refcount),
 				handle->buffer->size,  handle->buffer->kmap_cnt);
 		ion_handle_destroy(&handle->ref);
@@ -1121,7 +1121,7 @@ static int ion_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	ret = vm_insert_pfn(vma, (unsigned long)vmf->virtual_address, pfn);
 	mutex_unlock(&buffer->lock);
 	if (ret) {
-		IONMSG("%s vm insert pfn failed, vma = 0x%p, addr = 0x%p, pfn = %lu.\n",
+		IONMSG("%s vm insert pfn failed, vma = 0x%pK, addr = 0x%pK, pfn = %lu.\n",
 				__func__, vma, vmf->virtual_address, pfn);
 		return VM_FAULT_ERROR;
 	}
@@ -1143,7 +1143,7 @@ static void ion_vm_open(struct vm_area_struct *vma)
 	mutex_lock(&buffer->lock);
 	list_add(&vma_list->list, &buffer->vmas);
 	mutex_unlock(&buffer->lock);
-	pr_debug("%s: adding %p\n", __func__, vma);
+	pr_debug("%s: adding %pK\n", __func__, vma);
 }
 
 static void ion_vm_close(struct vm_area_struct *vma)
@@ -1158,7 +1158,7 @@ static void ion_vm_close(struct vm_area_struct *vma)
 			continue;
 		list_del(&vma_list->list);
 		kfree(vma_list);
-		pr_debug("%s: deleting %p\n", __func__, vma);
+		pr_debug("%s: deleting %pK\n", __func__, vma);
 		break;
 	}
 	mutex_unlock(&buffer->lock);
@@ -1292,7 +1292,7 @@ struct dma_buf *ion_share_dma_buf(struct ion_client *client,
 	dmabuf = dma_buf_export(buffer, &dma_buf_ops, buffer->size, O_RDWR,
 				NULL);
 	if (IS_ERR(dmabuf)) {
-		IONMSG("%s dma buf export failed dmabuf is error 0x%p.\n", __func__, dmabuf);
+		IONMSG("%s dma buf export failed dmabuf is error 0x%pK.\n", __func__, dmabuf);
 		ion_buffer_put(buffer);
 		return dmabuf;
 	}
@@ -1308,7 +1308,7 @@ int ion_share_dma_buf_fd(struct ion_client *client, struct ion_handle *handle)
 
 	dmabuf = ion_share_dma_buf(client, handle);
 	if (IS_ERR(dmabuf)) {
-		IONMSG("%s dmabuf is err 0x%p.\n", __func__, dmabuf);
+		IONMSG("%s dmabuf is err 0x%pK.\n", __func__, dmabuf);
 		return PTR_ERR(dmabuf);
 	}
 
@@ -1333,7 +1333,7 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd)
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf)) {
-		IONMSG("%s dma_buf_get fail fd=%d ret=0x%p\n", __func__, fd, dmabuf);
+		IONMSG("%s dma_buf_get fail fd=%d ret=0x%pK\n", __func__, fd, dmabuf);
 		return ERR_CAST(dmabuf);
 	}
 	/* if this memory came from ion */
@@ -1358,7 +1358,7 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd)
 	handle = ion_handle_create(client, buffer);
 	if (IS_ERR(handle)) {
 		mutex_unlock(&client->lock);
-		IONMSG("%s handle is error 0x%p.\n", __func__, handle);
+		IONMSG("%s handle is error 0x%pK.\n", __func__, handle);
 		goto end;
 	}
 
@@ -1387,7 +1387,7 @@ static int ion_sync_for_device(struct ion_client *client, int fd)
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf)) {
-		IONMSG("%s dma_buf_get failed dmabuf is err %d, 0x%p.\n", __func__, fd, dmabuf);
+		IONMSG("%s dma_buf_get failed dmabuf is err %d, 0x%pK.\n", __func__, fd, dmabuf);
 		return PTR_ERR(dmabuf);
 	}
 
@@ -1569,7 +1569,7 @@ static int ion_open(struct inode *inode, struct file *file)
 	snprintf(debug_name, 64, "%u", task_pid_nr(current->group_leader));
 	client = ion_client_create(dev, debug_name);
 	if (IS_ERR(client)) {
-		IONMSG("%s ion client create failed 0x%p.\n", __func__, client);
+		IONMSG("%s ion client create failed 0x%pK.\n", __func__, client);
 		return PTR_ERR(client);
 	}
 	file->private_data = client;
@@ -1626,10 +1626,10 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 			char task_comm[TASK_COMM_LEN];
 
 			get_task_comm(task_comm, client->task);
-			seq_printf(s, "%16.s(%16.s) %16u %16zu 0x%p\n", task_comm,
+			seq_printf(s, "%16.s(%16.s) %16u %16zu 0x%pK\n", task_comm,
 					client->dbg_name, client->pid, size, client);
 		} else {
-			seq_printf(s, "%16.s(%16.s) %16u %16zu 0x%p\n", client->name,
+			seq_printf(s, "%16.s(%16.s) %16u %16zu 0x%pK\n", client->name,
 					"from_kernel", client->pid, size, client);
 		}
 	}
@@ -1920,13 +1920,13 @@ struct ion_handle *ion_drv_get_handle(struct ion_client *client, int user_handle
 		handle = kernel_handle;
 
 		if (IS_ERR_OR_NULL(handle)) {
-			IONMSG("%s handle invalid, handle = 0x%p.\n", __func__, handle);
+			IONMSG("%s handle invalid, handle = 0x%pK.\n", __func__, handle);
 			return ERR_PTR(-EINVAL);
 		}
 
 		mutex_lock(&client->lock);
 		if (!ion_handle_validate(client, handle)) {
-			IONMSG("%s handle invalid, handle=0x%p\n", __func__, handle);
+			IONMSG("%s handle invalid, handle=0x%pK\n", __func__, handle);
 			mutex_unlock(&client->lock);
 			return ERR_PTR(-EINVAL);
 		}
