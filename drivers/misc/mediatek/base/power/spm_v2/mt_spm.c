@@ -29,6 +29,7 @@
 #include <linux/of_address.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/irqchip/mt-eic.h>
+#include <linux/spm.h>
 /* #include <mach/eint.h> */
 /* #include <mach/mt_boot.h> */
 #ifdef CONFIG_MTK_WD_KICKER
@@ -850,8 +851,7 @@ int spm_load_pcm_firmware(struct platform_device *pdev)
 
 int spm_load_pcm_firmware_nodev(void)
 {
-	spm_load_pcm_firmware(pspmdev);
-	return 0;
+	return spm_load_pcm_firmware(pspmdev);
 }
 
 int spm_load_firmware_status(void)

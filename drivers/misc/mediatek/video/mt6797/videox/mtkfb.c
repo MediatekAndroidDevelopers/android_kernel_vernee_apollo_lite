@@ -32,6 +32,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/dma-buf.h>
+#include <linux/spm.h>
 #include <asm/uaccess.h>
 #include <asm/atomic.h>
 /* #include <asm/mach-types.h> */
@@ -166,6 +167,8 @@ unsigned int need_esd_check = 0;
 unsigned int lcd_fps = 6000;
 wait_queue_head_t screen_update_wq;
 char mtkfb_lcm_name[256] = { 0 };
+
+bool spm_firmware_loaded = false;
 
 
 DEFINE_SEMAPHORE(sem_flipping);
@@ -2502,6 +2505,11 @@ static void mtkfb_early_suspend(void)
 	if (ret < 0) {
 		DISPERR("primary display suspend failed\n");
 		return;
+	}
+
+	if (!spm_firmware_loaded && get_boot_mode() == NORMAL_BOOT) {
+		if (spm_load_pcm_firmware_nodev() == 0)
+		    spm_firmware_loaded = true;
 	}
 
 	DISPMSG("[FB Driver] leave early_suspend\n");
