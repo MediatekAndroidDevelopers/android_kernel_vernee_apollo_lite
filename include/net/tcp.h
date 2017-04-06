@@ -1620,8 +1620,6 @@ static inline bool tcp_stream_memory_free(const struct sock *sk)
 extern void tcp_v4_reset_connections_by_uid(struct uid_err uid_e);
 extern void tcp_v4_handle_retrans_time_by_uid(struct uid_err uid_e);
 
-extern int tcp_nuke_addr(struct net *net, struct sockaddr *addr);
-
 #ifdef CONFIG_PROC_FS
 int tcp4_proc_init(void);
 void tcp4_proc_exit(void);
