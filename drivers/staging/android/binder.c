@@ -1500,17 +1500,26 @@ static void binder_transaction(struct binder_proc *proc,
 		if (tr->target.handle) {
 			struct binder_ref *ref;
 
+			/*
+			 * There must already be a strong ref
+			 * on this node. If so, do a strong
+			 * increment on the node to ensure it
+			 * stays alive until the transaction is
+			 * done.
+			 */
 			ref = binder_get_ref(proc, tr->target.handle, true);
-			if (ref == NULL) {
-				binder_user_error
-				    ("%d:%d got transaction to invalid handle\n",
-				     proc->pid, thread->pid);
+			if (ref) {
+				binder_inc_node(ref->node, 1, 0, NULL);
+				target_node = ref->node;
+			}
+			if (target_node == NULL) {
+				binder_user_error("%d:%d got transaction to invalid handle\n",
+					proc->pid, thread->pid);
 				return_error = BR_FAILED_REPLY;
 				return_error_param = -EINVAL;
 				return_error_line = __LINE__;
 				goto err_invalid_target_handle;
 			}
-			target_node = ref->node;
 		} else {
 			mutex_lock(&context->context_mgr_node_lock);
 			target_node = context->binder_context_mgr_node;
@@ -1520,6 +1529,7 @@ static void binder_transaction(struct binder_proc *proc,
 				return_error_line = __LINE__;
 				goto err_no_context_mgr_node;
 			}
+			binder_inc_node(target_node, 1, 0, NULL);
 			mutex_unlock(&context->context_mgr_node_lock);
 		}
 		e->to_node = target_node->debug_id;
@@ -1644,9 +1654,6 @@ static void binder_transaction(struct binder_proc *proc,
 	t->buffer->transaction = t;
 	t->buffer->target_node = target_node;
 	trace_binder_transaction_alloc_buf(t->buffer);
-	if (target_node)
-		binder_inc_node(target_node, 1, 0, NULL);
-
 	off_start = (binder_size_t *)(t->buffer->data +
 				      ALIGN(tr->data_size, sizeof(void *)));
 	offp = off_start;
@@ -1923,6 +1930,7 @@ err_bad_parent:
 err_copy_data_failed:
 	trace_binder_transaction_failed_buffer_release(t->buffer);
 	binder_transaction_buffer_release(target_proc, t->buffer, offp);
+	target_node = NULL;
 	t->buffer->transaction = NULL;
 	binder_alloc_free_buf(&target_proc->alloc, t->buffer);
 err_binder_alloc_buf_failed:
@@ -1937,6 +1945,9 @@ err_empty_call_stack:
 err_dead_binder:
 err_invalid_target_handle:
 err_no_context_mgr_node:
+	if (target_node)
+		binder_dec_node(target_node, 1, 0);
+
 	binder_debug(BINDER_DEBUG_FAILED_TRANSACTION,
 		     "%d:%d transaction failed %d/%d, size %lld-%lld line %d\n",
 		     proc->pid, thread->pid, return_error, return_error_param,
