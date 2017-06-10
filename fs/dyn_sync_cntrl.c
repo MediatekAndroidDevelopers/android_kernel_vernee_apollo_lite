@@ -19,6 +19,8 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <linux/mutex.h>
+#include <linux/notifier.h>
+#include <linux/reboot.h>
 #include <linux/writeback.h>
 #include <linux/fb.h>
 
@@ -95,15 +97,51 @@ static struct attribute_group dyn_fsync_active_attr_group =
 
 static struct kobject *dyn_fsync_kobj;
 
-static void dyn_fsync_suspend(void)
+static void dyn_fsync_flush(void)
 {
 	mutex_lock(&fsync_mutex);
-	/* flush all outstanding buffers */
-	if (dyn_fsync_active)
-		dyn_fsync_suspend_actions();
+	dyn_fsync_suspend_actions();
 	mutex_unlock(&fsync_mutex);
 
 	pr_info("%s: flushing work finished.\n", __FUNCTION__);
+}
+
+static int dyn_fsync_notify_sys(struct notifier_block *this, unsigned long code,
+				void *unused)
+{
+	if (code == SYS_DOWN || code == SYS_HALT) {
+		/* flush all outstanding buffers */
+		if (dyn_fsync_active)
+			dyn_fsync_flush();
+	}
+
+	return 0;
+}
+
+static struct notifier_block dyn_fsync_notifier = {
+	.notifier_call = dyn_fsync_notify_sys,
+};
+
+static int dyn_fsync_panic_event(struct notifier_block *this,
+		unsigned long event, void *ptr)
+{
+	/* flush all outstanding buffers */
+	if (dyn_fsync_active)
+		dyn_fsync_flush();
+
+	return 0;
+}
+
+static struct notifier_block dyn_fsync_panic_block = {
+	.notifier_call  = dyn_fsync_panic_event,
+	.priority       = INT_MAX,
+};
+
+static void dyn_fsync_suspend(void)
+{
+	/* flush all outstanding buffers */
+	if (dyn_fsync_active)
+		dyn_fsync_flush();
 }
 
 static int dyn_fsync_fb_notifier_callback(struct notifier_block *self,
@@ -144,6 +182,18 @@ static int __init dyn_fsync_init(void)
 		return ret;
 	}
 
+	ret = register_reboot_notifier(&dyn_fsync_notifier);
+	if (ret) {
+		pr_info("%s dyn_fsync_notifier register failed!\n", __FUNCTION__);
+		return ret;
+	}
+	ret = atomic_notifier_chain_register(&panic_notifier_list,
+		&dyn_fsync_panic_block);
+	if (ret) {
+		pr_info("%s panic_notifier_list register failed!\n", __FUNCTION__);
+		return ret;
+	}
+
 	dyn_fsync_kobj = kobject_create_and_add("dyn_fsync", kernel_kobj);
 	if (!dyn_fsync_kobj) {
 		pr_err("%s dyn_fsync kobject create failed!\n", __FUNCTION__);
@@ -165,6 +215,9 @@ static void __exit dyn_fsync_exit(void)
 	if (dyn_fsync_kobj != NULL)
 		kobject_put(dyn_fsync_kobj);
 	fb_unregister_client(&dyn_fsync_fb_notif);
+	unregister_reboot_notifier(&dyn_fsync_notifier);
+	atomic_notifier_chain_unregister(&panic_notifier_list,
+		&dyn_fsync_panic_block);
 }
 
 module_init(dyn_fsync_init);
