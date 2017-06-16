@@ -188,6 +188,12 @@
 		vib_limit = <9>;
 		vib_vol= <5>;
 	};
+	hall_cover {
+		compatible = "hall-cover";
+		status = "okay";
+		hall_code = <0x0c>;
+		hall_name = "cover";
+	};
 /* sensor standardization */
 	cust_accel@0 {
 		compatible = "mediatek,lsm6ds0a";
@@ -508,6 +514,13 @@
 	interrupt-parent = <&eintc>;
 	interrupts = <86 IRQ_TYPE_EDGE_RISING>;
 	debounce = <86 0>;
+	status = "okay";
+};
+
+&hall {
+	interrupt-parent = <&eintc>;
+	interrupts = <93 IRQ_TYPE_LEVEL_LOW>;
+	debounce = <93 0>;
 	status = "okay";
 };
 
