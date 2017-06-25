@@ -16,8 +16,7 @@
 #include <mt_spm_sleep.h>
 #include <mach/mt_pbm.h>
 
-#include "ccci_config.h"
-#include "ccci_modem.h"
+#include "ccci_core.h"
 #include "ccci_platform.h"
 #include "ccif_c2k_platform.h"
 #include "modem_ccif.h"
@@ -96,8 +95,10 @@ int md_ccif_get_modem_hw_info(struct platform_device *dev_ptr,
 	switch (dev_cfg->index) {
 	case 1:		/*MD_SYS2 */
 #ifdef CONFIG_OF
-		dev_cfg->major = 0;
-		dev_cfg->minor_base = 0;
+		of_property_read_u32(dev_ptr->dev.of_node, "ccif,major",
+				     &dev_cfg->major);
+		of_property_read_u32(dev_ptr->dev.of_node, "ccif,minor_base",
+				     &dev_cfg->minor_base);
 		of_property_read_u32(dev_ptr->dev.of_node, "ccif,capability",
 				     &dev_cfg->capability);
 
@@ -400,9 +401,6 @@ int md_ccif_let_md_go(struct ccci_modem *md)
 			     INFRA_AO_C2K_HANDSHAKE,
 			     ccif_read32(md_ctrl->hw_info->infra_ao_base,
 					 INFRA_AO_C2K_HANDSHAKE) | (0x1 << 1));
-
-		ccif_write32(md_ctrl->hw_info->c2k_misc, C2K_CONFIG,
-			     ccif_read32(md_ctrl->hw_info->c2k_misc, C2K_CONFIG) & (~(0x3 << 11)));
 		while (!
 		       ((ccif_read32
 			 (md_ctrl->hw_info->c2k_misc,
@@ -492,15 +490,9 @@ int md_ccif_power_on(struct ccci_modem *md)
 	return ret;
 }
 
-int md_ccif_power_off(struct ccci_modem *md, unsigned int stop_type)
+int md_ccif_power_off(struct ccci_modem *md, unsigned int timeout)
 {
 	int ret = 0;
-#if defined(CONFIG_MTK_CLKMGR)
-	unsigned int timeout = 0;
-
-	if (stop_type == MD_FLIGHT_MODE_ENTER)
-		timeout = 1000;
-#endif
 
 	switch (md->index) {
 	case MD_SYS2:
@@ -515,6 +507,7 @@ int md_ccif_power_off(struct ccci_modem *md, unsigned int stop_type)
 		ret = md_power_off(SYS_MD3, timeout);
 #else
 		clk_disable_unprepare(clk_scp_sys_md3_main);
+		set_ccif_cg(0);
 #endif
 		kicker_pbm_by_md(KR_MD3, false);
 		CCCI_NORMAL_LOG(md->index, TAG, "Call end kicker_pbm_by_md(3,false)\n");
@@ -528,12 +521,11 @@ void reset_md1_md3_pccif(struct ccci_modem *md)
 {
 	unsigned int tx_channel = 0;
 	int i;
+
 	struct md_ccif_ctrl *md_ctrl = (struct md_ccif_ctrl *)md->private_data;
+
 	struct md_hw_info *hw_info = md_ctrl->hw_info;
 
-#ifdef FEATURE_CLK_CG_CONTROL
-	ccci_set_clk_cg(md, 1);
-#endif
 	reset_ccirq_hardware();
 
 	/* clear occupied channel */
@@ -554,12 +546,10 @@ void reset_md1_md3_pccif(struct ccci_modem *md)
 		ccif_write32(hw_info->md1_pccif_base, PCCIF_CHDATA+i*sizeof(unsigned int), 0);
 		ccif_write32(hw_info->md3_pccif_base, PCCIF_CHDATA+i*sizeof(unsigned int), 0);
 	}
-#ifdef FEATURE_CLK_CG_CONTROL
-	ccci_set_clk_cg(md, 0);
-#endif
 	/*clear md1 md3 shared memory*/
 	if (md->mem_layout.md1_md3_smem_vir != NULL)
 		memset_io(md->mem_layout.md1_md3_smem_vir, 0, md->mem_layout.md1_md3_smem_size);
+
 }
 
 void dump_c2k_register(struct ccci_modem *md, unsigned int dump_boot_reg)

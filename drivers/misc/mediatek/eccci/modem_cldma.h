@@ -23,6 +23,7 @@
 
 #include "ccci_config.h"
 #include "ccci_bm.h"
+
 /*
   * hardcode, max queue number should be synced with port array in port_cfg.c and macros in ccci_core.h
   * following number should sync with MAX_TXQ/RXQ_NUM in ccci_core.h and bitmask in modem_cldma.c
@@ -35,7 +36,6 @@
 #define NORMAL_RXQ_NUM 6
 #define MAX_BD_NUM (MAX_SKB_FRAGS + 1)
 #define TRAFFIC_MONITOR_INTERVAL 10	/* seconds */
-#define ENABLE_HS1_POLLING_TIMER
 #define SKB_RX_QUEUE_MAX_LEN 200000
 
 /*
@@ -60,7 +60,8 @@ struct cldma_request {
 	struct list_head entry;
 	struct list_head bd;
 
-	/* inherit from skb */
+	/* inherit from struct ccci_request */
+	DATA_POLICY policy;
 	unsigned char ioc_override;	/* bit7: override or not; bit0: IOC setting */
 };
 
@@ -85,23 +86,11 @@ struct cldma_ring {
 	CLDMA_RING_TYPE type;
 
 	int (*handle_tx_request)(struct md_cd_queue *queue, struct cldma_request *req,
-				  struct sk_buff *skb, unsigned int ioc_override);
-	int (*handle_rx_done)(struct md_cd_queue *queue, int budget, int blocking);
-	int (*handle_tx_done)(struct md_cd_queue *queue, int budget, int blocking);
+				  struct sk_buff *skb, DATA_POLICY policy, unsigned int ioc_override);
+	int (*handle_rx_done)(struct md_cd_queue *queue, int budget, int blocking, int *result, int *rxbytes);
+	int (*handle_tx_done)(struct md_cd_queue *queue, int budget, int blocking, int *result);
+	int (*handle_rx_refill)(struct md_cd_queue *queue);
 };
-
-#ifdef ENABLE_FAST_HEADER
-struct ccci_fast_header {
-	u32 data0;
-	u16 packet_length:16;
-	u16 gpd_count:15;
-	u16 has_hdr_room:1;
-	u16 channel:16;
-	u16 seq_num:15;
-	u16 assert_bit:1;
-	u32 reserved;
-};
-#endif
 
 static inline struct cldma_request *cldma_ring_step_forward(struct cldma_ring *ring, struct cldma_request *req)
 {
@@ -117,6 +106,8 @@ static inline struct cldma_request *cldma_ring_step_forward(struct cldma_ring *r
 struct md_cd_queue {
 	unsigned char index;
 	struct ccci_modem *modem;
+	struct ccci_port *napi_port;
+
 	/*
 	 * what we have here is not a typical ring buffer, as we have three players:
 	 * for Tx: sender thread -> CLDMA -> tx_done thread
@@ -158,6 +149,8 @@ struct md_cd_queue {
 	struct workqueue_struct *worker;
 	struct work_struct cldma_rx_work;
 	struct delayed_work cldma_tx_work;
+	struct workqueue_struct *refill_worker; /* only for Rx */
+	struct work_struct cldma_refill_work; /* only for Rx */
 
 	wait_queue_head_t rx_wq;
 	struct task_struct *rx_thread;
@@ -166,9 +159,6 @@ struct md_cd_queue {
 	struct timer_list timeout_timer;
 	unsigned long long timeout_start;
 	unsigned long long timeout_end;
-#endif
-#ifdef ENABLE_FAST_HEADER
-	struct ccci_fast_header fast_hdr;
 #endif
 	u16 debug_id;
 	DIRECTION dir;
@@ -196,13 +186,14 @@ struct md_cd_ctrl {
 	char peer_wakelock_name[32];
 	struct wake_lock peer_wake_lock;
 	struct work_struct ccif_work;
-#ifdef ENABLE_HS1_POLLING_TIMER
-	struct timer_list hs1_polling_timer;
-#endif
+	struct delayed_work ccif_delayed_work;
+	struct work_struct ccif_allQreset_work;
+	struct timer_list bus_timeout_timer;
 	spinlock_t cldma_timeout_lock;	/* this lock is using to protect CLDMA, not only for timeout checking */
 	struct work_struct cldma_irq_work;
 	struct workqueue_struct *cldma_irq_worker;
 	int channel_id;		/* CCIF channel */
+	struct work_struct wdt_work;
 
 #if TRAFFIC_MONITOR_INTERVAL
 	unsigned tx_traffic_monitor[CLDMA_TXQ_NUM];
@@ -241,16 +232,18 @@ struct md_cd_ctrl {
 	void __iomem *md_topsm_status;
 	void __iomem *md_ost_status;
 	void __iomem *md_pll;
+	/*struct md_pll_reg md_pll_base; struct moved to platform part*/
 	struct md_pll_reg *md_pll_base;
-	struct tasklet_struct cldma_rxq0_task;
 
 	unsigned int cldma_irq_id;
 	unsigned int ap_ccif_irq_id;
 	unsigned int md_wdt_irq_id;
+	unsigned int ap2md_bus_timeout_irq_id;
 
 	unsigned long cldma_irq_flags;
 	unsigned long ap_ccif_irq_flags;
 	unsigned long md_wdt_irq_flags;
+	unsigned long ap2md_bus_timeout_irq_flags;
 
 	struct md_hw_info *hw_info;
 };
@@ -258,10 +251,6 @@ struct md_cd_ctrl {
 struct cldma_tgpd {
 	u8 gpd_flags;
 	u8 gpd_checksum;
-	/* Use debug_id low btye to support 6GM address
-	*	bit[0..3]: storedata_buff_bd_ptr high bit[35:32]
-	*	bit[4..7]:	store next_gpd_ptr high bit[35:32]
-	*/
 	u16 debug_id;
 	u32 next_gpd_ptr;
 	u32 data_buff_bd_ptr;
@@ -277,20 +266,12 @@ struct cldma_rgpd {
 	u32 next_gpd_ptr;
 	u32 data_buff_bd_ptr;
 	u16 data_buff_len;
-	/* Use debug_id low btye to support 6GM address
-	*	bit[0..3]: storedata_buff_bd_ptr high bit[35:32]
-	*	bit[4..7]:	store next_gpd_ptr high bit[35:32]
-	*/
 	u16 debug_id;
 } __packed;
 
 struct cldma_tbd {
 	u8 bd_flags;
 	u8 bd_checksum;
-	/* Use reserved low btye to support 6GM address
-	*	bit[0..3]: data_buff_ptr high bit[35:32]
-	*	bit[4..7]:	store next_bd_ptr high bit[35:32]
-	*/
 	u16 reserved;
 	u32 next_bd_ptr;
 	u32 data_buff_ptr;
@@ -306,10 +287,6 @@ struct cldma_rbd {
 	u32 next_bd_ptr;
 	u32 data_buff_ptr;
 	u16 data_buff_len;
-	/* Use reserved low btye to support 6GM address
-	*	bit[0..3]: data_buff_ptr high bit[35:32]
-	*	bit[4..7]:	store next_bd_ptr high bit[35:32]
-	*/
 	u16 reserved;
 } __packed;
 
@@ -320,16 +297,16 @@ struct cldma_rspd {
 	u32 next_spd_ptr;
 	u32 data_buff_ptr;
 	u16 data_buff_len;
-	/* Use reserved low btye to support 6GM address
-	*	bit[0..3]: data_buff_ptr high bit[35:32]
-	*	bit[4..7]: store next_bd_ptr high bit[35:32]
-	*/
-	u16 reserved;
+	u8 reserve_len;
+	u8 spd_flags2;
 } __packed;
 
 typedef enum {
-	ONCE_MORE,
-	ALL_CLEAR,
+	UNDER_BUDGET,
+	REACH_BUDGET,
+	PORT_REFUSE,
+	NO_SKB,
+	NO_REQ
 } RX_COLLECT_RESULT;
 
 enum {
@@ -343,6 +320,8 @@ static inline void md_cd_queue_struct_init(struct md_cd_queue *queue, struct ccc
 	queue->dir = dir;
 	queue->index = index;
 	queue->modem = md;
+	queue->napi_port = NULL;
+
 	queue->tr_ring = NULL;
 	queue->tr_done = NULL;
 	queue->tx_xmit = NULL;
@@ -350,10 +329,12 @@ static inline void md_cd_queue_struct_init(struct md_cd_queue *queue, struct ccc
 	spin_lock_init(&queue->ring_lock);
 	queue->debug_id = 0;
 	queue->busy_count = 0;
-#ifdef ENABLE_FAST_HEADER
-	queue->fast_hdr.gpd_count = 0;
-#endif
 }
+#ifndef CONFIG_MTK_ECCCI_C2K
+#ifdef CONFIG_MTK_SVLTE_SUPPORT
+extern void c2k_reset_modem(void);
+#endif
+#endif
 extern void mt_irq_dump_status(int irq);
 extern unsigned int ccci_get_md_debug_mode(struct ccci_modem *md);
 
@@ -366,6 +347,10 @@ extern unsigned long ccci_modem_boot_count[];
 extern int gf_port_list_reg[GF_PORT_LIST_MAX];
 extern int gf_port_list_unreg[GF_PORT_LIST_MAX];
 extern int ccci_ipc_set_garbage_filter(struct ccci_modem *md, int reg);
-extern bool spm_is_md1_sleep(void);
-extern void spm_ap_mdsrc_req(u8 lock);
+
+#ifdef TEST_MESSAGE_FOR_BRINGUP
+extern int ccci_sysmsg_echo_test(int, int);
+extern int ccci_sysmsg_echo_test_l1core(int, int);
+#endif
+
 #endif				/* __MODEM_CD_H__ */

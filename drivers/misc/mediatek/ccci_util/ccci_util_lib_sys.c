@@ -95,8 +95,10 @@ static int get_md_status(int md_id, char val[], int size)
 
 static int trigger_md_boot(int md_id)
 {
-	if ((md_id < MAX_MD_NUM) && (boot_md_func[md_id] != NULL))
-		return (boot_md_func[md_id]) (md_id);
+	if ((md_id < MAX_MD_NUM) && (boot_md_func[md_id] != NULL)) {
+		(boot_md_func[md_id]) (md_id);
+		return 0;
+	}
 
 	return -1;
 }
@@ -131,8 +133,6 @@ static ssize_t boot_status_store(const char *buf, size_t count)
 	if (md_id < MAX_MD_NUM) {
 		if (trigger_md_boot(md_id) != 0)
 			CCCI_UTIL_INF_MSG("md%d n/a\n", md_id + 1);
-		else
-			clear_meta_1st_boot_arg(md_id);
 	} else
 		CCCI_UTIL_INF_MSG("invalid id(%d)\n", md_id + 1);
 	return count;
@@ -159,15 +159,6 @@ static ssize_t ccci_md_enable_show(char *buf)
 
 CCCI_ATTR(md_en, 0660, &ccci_md_enable_show, NULL);
 
-/* Sys -- post fix */
-static ssize_t ccci_md1_post_fix_show(char *buf)
-{
-	get_md_postfix(MD_SYS1, NULL, buf, NULL);
-	return strlen(buf);
-}
-
-CCCI_ATTR(md1_postfix, 0444, &ccci_md1_post_fix_show, NULL);
-
 /* Sys -- dump buff usage */
 static ssize_t ccci_dump_buff_usage_show(char *buf)
 {
@@ -185,10 +176,10 @@ static ssize_t ccci_dump_event_show(char *buf)
 CCCI_ATTR(md_chn, 0444, &ccci_dump_event_show, NULL);
 
 /* Sys -- Versin */
-static unsigned int ccci_port_ver = 6; /* ECCCI_FSM */
+static unsigned int ccci_port_ver = 3;
 static ssize_t ccci_version_show(char *buf)
 {
-	return snprintf(buf, 16, "%d\n", ccci_port_ver);
+	return snprintf(buf, 16, "%d\n", ccci_port_ver);	/* ECCCI */
 }
 
 void update_ccci_port_ver(unsigned int new_ver)
@@ -597,11 +588,10 @@ static ssize_t kcfg_setting_show(char *buf)
 	actual_write = snprintf(&buf[curr], 4096 - curr, "[MTK_LTE_DC_SUPPORT]:0\n");
 #endif
 	curr += actual_write;
-	if (ccci_get_opt_val("opt_eccci_c2k") > 0) {
-		actual_write = snprintf(&buf[curr], 4096 - curr, "[MTK_ECCCI_C2K]:1\n");
-		curr += actual_write;
-	}
-
+#ifdef CONFIG_MTK_ECCCI_C2K
+	actual_write = snprintf(&buf[curr], 4096 - curr, "[MTK_ECCCI_C2K]:1\n");
+	curr += actual_write;
+#endif
 	/* Add total size to tail */
 	actual_write = snprintf(&buf[curr], 4096 - curr, "total:%d\n", curr);
 	curr += actual_write;
@@ -629,7 +619,6 @@ static struct attribute *ccci_default_attrs[] = {
 	&ccci_attr_lk_md.attr,
 	&ccci_attr_md_chn.attr,
 	&ccci_attr_ft_info.attr,
-	&ccci_attr_md1_postfix.attr,
 	NULL
 };
 

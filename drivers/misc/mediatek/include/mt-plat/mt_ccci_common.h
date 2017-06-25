@@ -29,6 +29,23 @@ typedef enum {
 	MAX_MD_NUM
 } MD_SYS;
 
+/* Meta parsing section */
+#define MD1_EN (1<<0)
+#define MD2_EN (1<<1)
+#define MD3_EN (1<<2)
+#define MD5_EN (1<<4)
+
+#define MD_2G_FLAG    (1<<0)
+#define MD_FDD_FLAG   (1<<1)
+#define MD_TDD_FLAG   (1<<2)
+#define MD_LTE_FLAG   (1<<3)
+#define MD_SGLTE_FLAG (1<<4)
+
+#define MD_WG_FLAG  (MD_FDD_FLAG|MD_2G_FLAG)
+#define MD_TG_FLAG  (MD_TDD_FLAG|MD_2G_FLAG)
+#define MD_LWG_FLAG (MD_LTE_FLAG|MD_FDD_FLAG|MD_2G_FLAG)
+#define MD_LTG_FLAG (MD_LTE_FLAG|MD_TDD_FLAG|MD_2G_FLAG)
+
 /* MD type defination */
 typedef enum {
 	md_type_invalid = 0,
@@ -87,6 +104,15 @@ struct ccci_header {
 	u32 reserved;
 } __packed; /* not necessary, but it's a good gesture, :) */
 
+/*do not modify this c2k structure, because we assume its total size is 32bit,
+   and used as ccci_header's 'reserved' member*/
+struct c2k_ctrl_port_msg {
+	unsigned char id_hi;
+	unsigned char id_low;
+	unsigned char chan_num;
+	unsigned char option;
+} __packed; /* not necessary, but it's a good gesture, :) */
+
 struct md_check_header {
 	unsigned char check_header[12];  /* magic number is "CHECK_HEADER"*/
 	unsigned int  header_verno;	  /* header structure version number */
@@ -106,10 +132,162 @@ struct md_check_header {
 	unsigned int  size;			  /* the size of this structure */
 } __packed;
 
+struct md_check_header_v3 {
+	unsigned char check_header[12];  /* magic number is "CHECK_HEADER"*/
+	unsigned int  header_verno;	  /* header structure version number */
+	unsigned int  product_ver;	   /* 0x0:invalid; 0x1:debug version; 0x2:release version */
+	unsigned int  image_type;		/* 0x0:invalid; 0x1:2G modem; 0x2: 3G modem */
+	unsigned char platform[16];	  /* MT6573_S01 or MT6573_S02 */
+	unsigned char build_time[64];	/* build time string */
+	unsigned char build_ver[64];	 /* project version, ex:11A_MD.W11.28 */
+
+	unsigned char bind_sys_id;	   /* bind to md sys id, MD SYS1: 1, MD SYS2: 2, MD SYS5: 5 */
+	unsigned char ext_attr;		  /* no shrink: 0, shrink: 1 */
+	unsigned char reserved[2];	   /* for reserved */
+
+	unsigned int  mem_size;		  /* md ROM/RAM image size requested by md */
+	unsigned int  md_img_size;	   /* md image size, exclude head size */
+	unsigned int  rpc_sec_mem_addr;  /* RPC secure memory address */
+
+	unsigned int  dsp_img_offset;
+	unsigned int  dsp_img_size;
+	unsigned char reserved2[88];
+
+	unsigned int  size;			  /* the size of this structure */
+} __packed;
+
 struct _md_regin_info {
 	unsigned int region_offset;
 	unsigned int region_size;
 };
+
+
+struct md_check_header_v4 {
+	unsigned char check_header[12]; /* magic number is "CHECK_HEADER"*/
+	unsigned int header_verno; /* header structure version number */
+	unsigned int product_ver; /* 0x0:invalid; 0x1:debug version; 0x2:release version */
+	unsigned int image_type; /* 0x0:invalid; 0x1:2G modem; 0x2: 3G modem */
+	unsigned char platform[16]; /* MT6573_S01 or MT6573_S02 */
+	unsigned char build_time[64]; /* build time string */
+	unsigned char build_ver[64]; /* project version, ex:11A_MD.W11.28 */
+
+	unsigned char bind_sys_id; /* bind to md sys id, MD SYS1: 1, MD SYS2: 2, MD SYS5: 5 */
+	unsigned char ext_attr; /* no shrink: 0, shrink: 1 */
+	unsigned char reserved[2]; /* for reserved */
+
+	unsigned int mem_size; /* md ROM/RAM image size requested by md */
+	unsigned int md_img_size; /* md image size, exclude head size */
+	unsigned int rpc_sec_mem_addr; /* RPC secure memory address */
+
+	unsigned int dsp_img_offset;
+	unsigned int dsp_img_size;
+
+	unsigned int region_num; /* total region number */
+	struct _md_regin_info region_info[8]; /* max support 8 regions */
+	unsigned int domain_attr[4]; /* max support 4 domain settings, each region has 4 control bits*/
+
+	unsigned char reserved2[4];
+
+	unsigned int size; /* the size of this structure */
+} __packed;
+
+struct md_check_header_v5 {
+	unsigned char check_header[12]; /* magic number is "CHECK_HEADER"*/
+	unsigned int  header_verno; /* header structure version number */
+	unsigned int  product_ver; /* 0x0:invalid; 0x1:debug version; 0x2:release version */
+	unsigned int  image_type; /* 0x0:invalid; 0x1:2G modem; 0x2: 3G modem */
+	unsigned char platform[16]; /* MT6573_S01 or MT6573_S02 */
+	unsigned char build_time[64]; /* build time string */
+	unsigned char build_ver[64]; /* project version, ex:11A_MD.W11.28 */
+
+	unsigned char bind_sys_id; /* bind to md sys id, MD SYS1: 1, MD SYS2: 2, MD SYS5: 5 */
+	unsigned char ext_attr; /* no shrink: 0, shrink: 1 */
+	unsigned char reserved[2]; /* for reserved */
+
+	unsigned int  mem_size; /* md ROM/RAM image size requested by md */
+	unsigned int  md_img_size; /* md image size, exclude head size */
+	unsigned int  rpc_sec_mem_addr; /* RPC secure memory address */
+
+	unsigned int  dsp_img_offset;
+	unsigned int  dsp_img_size;
+
+	unsigned int  region_num; /* total region number */
+	struct _md_regin_info region_info[8]; /* max support 8 regions */
+	unsigned int  domain_attr[4]; /* max support 4 domain settings, each region has 4 control bits*/
+
+	unsigned int  arm7_img_offset;
+	unsigned int  arm7_img_size;
+
+	unsigned char reserved_1[56];
+
+
+	unsigned int  size; /* the size of this structure */
+} __packed;
+
+struct md_check_header_struct {
+	unsigned char check_header[12];  /* magic number is "CHECK_HEADER"*/
+	unsigned int  header_verno;	  /* header structure version number */
+	unsigned int  product_ver;	   /* 0x0:invalid; 0x1:debug version; 0x2:release version */
+	unsigned int  image_type;		/* 0x0:invalid; 0x1:2G modem; 0x2: 3G modem */
+	unsigned char platform[16];	  /* MT6573_S01 or MT6573_S02 */
+	unsigned char build_time[64];	/* build time string */
+	unsigned char build_ver[64];	 /* project version, ex:11A_MD.W11.28 */
+
+	unsigned char bind_sys_id;	   /* bind to md sys id, MD SYS1: 1, MD SYS2: 2 */
+	unsigned char ext_attr;		  /* no shrink: 0, shrink: 1*/
+	unsigned char reserved[2];	   /* for reserved */
+
+	unsigned int  mem_size;		  /* md ROM/RAM image size requested by md */
+	unsigned int  md_img_size;	   /* md image size, exclude head size*/
+#if 0 /* no use now, we still use struct */
+	union {
+		struct {
+			unsigned int  reserved_info;	 /* for reserved */
+			unsigned int  size;			  /* the size of this structure */
+		} v12;
+		struct {
+			unsigned int  rpc_sec_mem_addr;  /* RPC secure memory address */
+
+			unsigned int  dsp_img_offset;
+			unsigned int  dsp_img_size;
+			unsigned char reserved2[88];
+
+			unsigned int  size;			  /* the size of this structure */
+		} v3;
+		struct {
+			unsigned int rpc_sec_mem_addr; /* RPC secure memory address */
+
+			unsigned int dsp_img_offset;
+			unsigned int dsp_img_size;
+
+			unsigned int region_num; /* total region number */
+			struct _md_regin_info region_info[8]; /* max support 8 regions */
+			unsigned int domain_attr[4]; /* max support 4 domain settings, each region has 4 control bits*/
+
+			unsigned char reserved2[4];
+
+			unsigned int size; /* the size of this structure */
+		} v4;
+		struct {
+			unsigned int  rpc_sec_mem_addr; /* RPC secure memory address */
+
+			unsigned int  dsp_img_offset;
+			unsigned int  dsp_img_size;
+
+			unsigned int  region_num; /* total region number */
+			struct _md_regin_info region_info[8]; /* max support 8 regions */
+			unsigned int  domain_attr[4]; /* max support 4 domain settings, each region has 4 control bits*/
+
+			unsigned int  arm7_img_offset;
+			unsigned int  arm7_img_size;
+
+			unsigned char reserved_1[56];
+
+			unsigned int  size; /* the size of this structure */
+		} v5;
+	} diff;
+#endif
+} __packed;
 
 /* ======================= */
 /* index id region_info                        */
@@ -158,6 +336,88 @@ enum{
 	MPU_DOMAIN_INFO_ID_LAST = MPU_DOMAIN_INFO_ID_MDHW,
 	MPU_DOMAIN_INFO_ID_TOTAL_NUM,
 };
+
+/* ================================================================================= */
+/* IOCTL defination */
+/* ================================================================================= */
+/* CCCI == EEMCS */
+#define CCCI_IOC_MAGIC 'C'
+#define CCCI_IOC_MD_RESET			_IO(CCCI_IOC_MAGIC, 0) /* mdlogger // META // muxreport */
+#define CCCI_IOC_GET_MD_STATE			_IOR(CCCI_IOC_MAGIC, 1, unsigned int) /* audio */
+#define CCCI_IOC_PCM_BASE_ADDR			_IOR(CCCI_IOC_MAGIC, 2, unsigned int) /* audio */
+#define CCCI_IOC_PCM_LEN			_IOR(CCCI_IOC_MAGIC, 3, unsigned int) /* audio */
+#define CCCI_IOC_FORCE_MD_ASSERT		_IO(CCCI_IOC_MAGIC, 4) /* muxreport // mdlogger */
+#define CCCI_IOC_ALLOC_MD_LOG_MEM		_IO(CCCI_IOC_MAGIC, 5) /* mdlogger */
+#define CCCI_IOC_DO_MD_RST			_IO(CCCI_IOC_MAGIC, 6) /* md_init */
+#define CCCI_IOC_SEND_RUN_TIME_DATA		_IO(CCCI_IOC_MAGIC, 7) /* md_init */
+#define CCCI_IOC_GET_MD_INFO			_IOR(CCCI_IOC_MAGIC, 8, unsigned int) /* md_init */
+#define CCCI_IOC_GET_MD_EX_TYPE			_IOR(CCCI_IOC_MAGIC, 9, unsigned int) /* mdlogger */
+#define CCCI_IOC_SEND_STOP_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 10) /* muxreport */
+#define CCCI_IOC_SEND_START_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 11) /* muxreport */
+#define CCCI_IOC_DO_STOP_MD			_IO(CCCI_IOC_MAGIC, 12) /* md_init */
+#define CCCI_IOC_DO_START_MD			_IO(CCCI_IOC_MAGIC, 13) /* md_init */
+#define CCCI_IOC_ENTER_DEEP_FLIGHT		_IO(CCCI_IOC_MAGIC, 14) /* RILD // factory */
+#define CCCI_IOC_LEAVE_DEEP_FLIGHT		_IO(CCCI_IOC_MAGIC, 15) /* RILD // factory */
+#define CCCI_IOC_POWER_ON_MD			_IO(CCCI_IOC_MAGIC, 16) /* md_init */
+#define CCCI_IOC_POWER_OFF_MD			_IO(CCCI_IOC_MAGIC, 17) /* md_init */
+#define CCCI_IOC_POWER_ON_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 18)
+#define CCCI_IOC_POWER_OFF_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 19)
+#define CCCI_IOC_SIM_SWITCH			_IOW(CCCI_IOC_MAGIC, 20, unsigned int) /* RILD // factory */
+#define CCCI_IOC_SEND_BATTERY_INFO		_IO(CCCI_IOC_MAGIC, 21) /* md_init */
+#define CCCI_IOC_SIM_SWITCH_TYPE		_IOR(CCCI_IOC_MAGIC, 22, unsigned int) /* RILD */
+#define CCCI_IOC_STORE_SIM_MODE			_IOW(CCCI_IOC_MAGIC, 23, unsigned int) /* RILD */
+#define CCCI_IOC_GET_SIM_MODE			_IOR(CCCI_IOC_MAGIC, 24, unsigned int) /* RILD */
+#define CCCI_IOC_RELOAD_MD_TYPE			_IO(CCCI_IOC_MAGIC, 25) /* META // md_init // muxreport */
+#define CCCI_IOC_GET_SIM_TYPE			_IOR(CCCI_IOC_MAGIC, 26, unsigned int) /* terservice */
+#define CCCI_IOC_ENABLE_GET_SIM_TYPE		_IOW(CCCI_IOC_MAGIC, 27, unsigned int) /* terservice */
+#define CCCI_IOC_SEND_ICUSB_NOTIFY		_IOW(CCCI_IOC_MAGIC, 28, unsigned int) /* icusbd */
+#define CCCI_IOC_SET_MD_IMG_EXIST		_IOW(CCCI_IOC_MAGIC, 29, unsigned int) /* md_init */
+#define CCCI_IOC_GET_MD_IMG_EXIST		_IOR(CCCI_IOC_MAGIC, 30, unsigned int) /* META */
+#define CCCI_IOC_GET_MD_TYPE			_IOR(CCCI_IOC_MAGIC, 31, unsigned int) /* RILD */
+#define CCCI_IOC_STORE_MD_TYPE			_IOW(CCCI_IOC_MAGIC, 32, unsigned int) /* RILD */
+#define CCCI_IOC_GET_MD_TYPE_SAVING		_IOR(CCCI_IOC_MAGIC, 33, unsigned int) /* META */
+#define CCCI_IOC_GET_EXT_MD_POST_FIX		_IOR(CCCI_IOC_MAGIC, 34, unsigned int) /* mdlogger */
+#define CCCI_IOC_FORCE_FD			_IOW(CCCI_IOC_MAGIC, 35, unsigned int) /* RILD(6577) */
+#define CCCI_IOC_AP_ENG_BUILD			_IOW(CCCI_IOC_MAGIC, 36, unsigned int) /* md_init(6577) */
+#define CCCI_IOC_GET_MD_MEM_SIZE		_IOR(CCCI_IOC_MAGIC, 37, unsigned int) /* md_init(6577) */
+#define CCCI_IOC_UPDATE_SIM_SLOT_CFG		_IOW(CCCI_IOC_MAGIC, 38, unsigned int) /* RILD */
+#define CCCI_IOC_GET_CFG_SETTING		_IOW(CCCI_IOC_MAGIC, 39, unsigned int) /* md_init */
+
+#define CCCI_IOC_SET_MD_SBP_CFG			_IOW(CCCI_IOC_MAGIC, 40, unsigned int) /* md_init */
+#define CCCI_IOC_GET_MD_SBP_CFG			_IOW(CCCI_IOC_MAGIC, 41, unsigned int) /* md_init */
+/* modem protocol type for meta: AP_TST or DHL */
+#define CCCI_IOC_GET_MD_PROTOCOL_TYPE	_IOR(CCCI_IOC_MAGIC, 42, char[16])
+#define CCCI_IOC_SEND_SIGNAL_TO_USER	_IOW(CCCI_IOC_MAGIC, 43, unsigned int) /* md_init */
+#define CCCI_IOC_RESET_MD1_MD3_PCCIF	_IO(CCCI_IOC_MAGIC, 45) /* md_init */
+#define CCCI_IOC_RESET_AP               _IOW(CCCI_IOC_MAGIC, 46, unsigned int)
+
+/*md_init set MD boot env data before power on MD */
+#define CCCI_IOC_SET_BOOT_DATA			_IOW(CCCI_IOC_MAGIC, 47, unsigned int[16])
+
+/* for user space share memory user */
+#define CCCI_IOC_SMEM_BASE			_IOR(CCCI_IOC_MAGIC, 48, unsigned int)
+#define CCCI_IOC_SMEM_LEN			_IOR(CCCI_IOC_MAGIC, 49, unsigned int)
+#define CCCI_IOC_SMEM_TX_NOTIFY			_IOW(CCCI_IOC_MAGIC, 50, unsigned int)
+#define CCCI_IOC_SMEM_RX_POLL			_IOR(CCCI_IOC_MAGIC, 51, unsigned int)
+#define CCCI_IOC_SMEM_SET_STATE			_IOW(CCCI_IOC_MAGIC, 52, unsigned int)
+#define CCCI_IOC_SMEM_GET_STATE			_IOR(CCCI_IOC_MAGIC, 53, unsigned int)
+
+#define CCCI_IOC_SET_CCIF_CG			_IOW(CCCI_IOC_MAGIC, 54, unsigned int) /*md_init*/
+#define CCCI_IOC_SET_EFUN               _IOW(CCCI_IOC_MAGIC, 55, unsigned int) /* RILD */
+
+#define CCCI_IOC_SET_HEADER				_IO(CCCI_IOC_MAGIC,  112) /* emcs_va */
+#define CCCI_IOC_CLR_HEADER				_IO(CCCI_IOC_MAGIC,  113) /* emcs_va */
+#define CCCI_IOC_DL_TRAFFIC_CONTROL		_IOW(CCCI_IOC_MAGIC, 119, unsigned int) /* mdlogger */
+
+#define CCCI_IPC_MAGIC 'P' /* only for IPC user */
+/* CCCI == EEMCS */
+#define CCCI_IPC_RESET_RECV			_IO(CCCI_IPC_MAGIC, 0)
+#define CCCI_IPC_RESET_SEND			_IO(CCCI_IPC_MAGIC, 1)
+#define CCCI_IPC_WAIT_MD_READY			_IO(CCCI_IPC_MAGIC, 2)
+#define CCCI_IPC_KERN_WRITE_TEST		_IO(CCCI_IPC_MAGIC, 3)
+#define CCCI_IPC_UPDATE_TIME			_IO(CCCI_IPC_MAGIC, 4)
+#define CCCI_IPC_WAIT_TIME_UPDATE		_IO(CCCI_IPC_MAGIC, 5)
+#define CCCI_IPC_UPDATE_TIMEZONE		_IO(CCCI_IPC_MAGIC, 6)
 
 /* ================================================================================= */
 /* CCCI Error number defination */
@@ -250,6 +510,147 @@ enum{
 #define CCCI_ERR_LOAD_IMG_ABNORAL_SIZE				(CCCI_ERR_LOAD_IMG_START_ID+13)
 #define CCCI_ERR_LOAD_IMG_NOT_FOUND					(CCCI_ERR_LOAD_IMG_START_ID+13)
 
+/* ================================================================================= */
+/* CCCI Channel ID and Message defination */
+/* ================================================================================= */
+typedef enum {
+	CCCI_CONTROL_RX = 0,
+	CCCI_CONTROL_TX = 1,
+	CCCI_SYSTEM_RX = 2,
+	CCCI_SYSTEM_TX = 3,
+	CCCI_PCM_RX = 4,
+	CCCI_PCM_TX = 5,
+	CCCI_UART1_RX = 6, /* META */
+	CCCI_UART1_RX_ACK = 7,
+	CCCI_UART1_TX = 8,
+	CCCI_UART1_TX_ACK = 9,
+	CCCI_UART2_RX = 10, /* MUX */
+	CCCI_UART2_RX_ACK = 11,
+	CCCI_UART2_TX = 12,
+	CCCI_UART2_TX_ACK = 13,
+	CCCI_FS_RX = 14,
+	CCCI_FS_TX = 15,
+	CCCI_PMIC_RX = 16,
+	CCCI_PMIC_TX = 17,
+	CCCI_UEM_RX = 18,
+	CCCI_UEM_TX = 19,
+	CCCI_CCMNI1_RX = 20,
+	CCCI_CCMNI1_RX_ACK = 21,
+	CCCI_CCMNI1_TX = 22,
+	CCCI_CCMNI1_TX_ACK = 23,
+	CCCI_CCMNI2_RX = 24,
+	CCCI_CCMNI2_RX_ACK = 25,
+	CCCI_CCMNI2_TX = 26,
+	CCCI_CCMNI2_TX_ACK = 27,
+	CCCI_CCMNI3_RX = 28,
+	CCCI_CCMNI3_RX_ACK = 29,
+	CCCI_CCMNI3_TX = 30,
+	CCCI_CCMNI3_TX_ACK = 31,
+	CCCI_RPC_RX = 32,
+	CCCI_RPC_TX = 33,
+	CCCI_IPC_RX = 34,
+	CCCI_IPC_RX_ACK = 35,
+	CCCI_IPC_TX = 36,
+	CCCI_IPC_TX_ACK = 37,
+	CCCI_IPC_UART_RX = 38,
+	CCCI_IPC_UART_RX_ACK = 39,
+	CCCI_IPC_UART_TX = 40,
+	CCCI_IPC_UART_TX_ACK = 41,
+	CCCI_MD_LOG_RX = 42,
+	CCCI_MD_LOG_TX = 43,
+	/* ch44~49 reserved for ARM7 */
+	CCCI_IT_RX = 50,
+	CCCI_IT_TX = 51,
+	CCCI_IMSV_UL = 52,
+	CCCI_IMSV_DL = 53,
+	CCCI_IMSC_UL = 54,
+	CCCI_IMSC_DL = 55,
+	CCCI_IMSA_UL = 56,
+	CCCI_IMSA_DL = 57,
+	CCCI_IMSDC_UL = 58,
+	CCCI_IMSDC_DL = 59,
+	CCCI_ICUSB_RX = 60,
+	CCCI_ICUSB_TX = 61,
+	CCCI_LB_IT_RX = 62,
+	CCCI_LB_IT_TX = 63,
+	CCCI_CCMNI1_DL_ACK = 64,
+	CCCI_CCMNI2_DL_ACK = 65,
+	CCCI_CCMNI3_DL_ACK = 66,
+	CCCI_STATUS_RX = 67,
+	CCCI_STATUS_TX = 68,
+	CCCI_CCMNI4_RX                  = 69,
+	CCCI_CCMNI4_RX_ACK              = 70,
+	CCCI_CCMNI4_TX                  = 71,
+	CCCI_CCMNI4_TX_ACK              = 72,
+	CCCI_CCMNI4_DLACK_RX            = 73, /*__CCMNI_ACK_FAST_PATH__*/
+	CCCI_CCMNI5_RX                  = 74,
+	CCCI_CCMNI5_RX_ACK              = 75,
+	CCCI_CCMNI5_TX                  = 76,
+	CCCI_CCMNI5_TX_ACK              = 77,
+	CCCI_CCMNI5_DLACK_RX            = 78, /*__CCMNI_ACK_FAST_PATH__*/
+	CCCI_CCMNI6_RX                  = 79,
+	CCCI_CCMNI6_RX_ACK              = 80,
+	CCCI_CCMNI6_TX                  = 81,
+	CCCI_CCMNI6_TX_ACK              = 82,
+	CCCI_CCMNI6_DLACK_RX            = 83, /*__CCMNI_ACK_FAST_PATH__*/
+	CCCI_CCMNI7_RX                  = 84,
+	CCCI_CCMNI7_RX_ACK              = 85,
+	CCCI_CCMNI7_TX                  = 86,
+	CCCI_CCMNI7_TX_ACK              = 87,
+	CCCI_CCMNI7_DLACK_RX            = 88, /*__CCMNI_ACK_FAST_PATH__*/
+	CCCI_CCMNI8_RX                  = 89,
+	CCCI_CCMNI8_RX_ACK              = 90,
+	CCCI_CCMNI8_TX                  = 91,
+	CCCI_CCMNI8_TX_ACK              = 92,
+	CCCI_CCMNI8_DLACK_RX            = 93, /*__CCMNI_ACK_FAST_P*/
+	CCCI_MDL_MONITOR_DL             = 94,
+	CCCI_MDL_MONITOR_UL             = 95,
+	CCCI_CCMNILAN_RX                = 96,
+	CCCI_CCMNILAN_RX_ACK            = 97,
+	CCCI_CCMNILAN_TX                = 98,
+	CCCI_CCMNILAN_TX_ACK            = 99,
+	CCCI_CCMNILAN_DLACK_RX          = 100,
+
+	/*5 chs for C2K only*/
+	CCCI_C2K_PPP_DATA,		/* data ch for c2k */
+	CCCI_C2K_AT,	/*rild AT ch for c2k*/
+	CCCI_C2K_AT2,	/*rild AT2 ch for c2k*/
+	CCCI_C2K_AT3,	/*rild AT3 ch for c2k*/
+	CCCI_C2K_AT4,	/*rild AT4 ch for c2k*/
+	CCCI_C2K_LB_DL,	/*downlink loopback*/
+
+	/* virtual channels */
+	CCCI_MONITOR_CH,
+	CCCI_DUMMY_CH,
+	CCCI_SMEM_CH,
+	CCCI_MAX_CH_NUM, /* RX channel ID should NOT be >= this!! */
+
+	CCCI_MONITOR_CH_ID = 0xf0000000, /* for backward compatible */
+	CCCI_FORCE_ASSERT_CH = 20090215,
+	CCCI_INVALID_CH_ID = 0xffffffff,
+} CCCI_CH;
+
+/* AP->md_init messages on monitor channel */
+typedef enum {
+	CCCI_MD_MSG_BOOT_READY		= 0xFAF50001,
+	CCCI_MD_MSG_BOOT_UP		= 0xFAF50002,
+	CCCI_MD_MSG_EXCEPTION		= 0xFAF50003,
+	CCCI_MD_MSG_RESET		= 0xFAF50004,
+	CCCI_MD_MSG_RESET_RETRY		= 0xFAF50005,
+	CCCI_MD_MSG_READY_TO_RESET	= 0xFAF50006,
+	CCCI_MD_MSG_BOOT_TIMEOUT	= 0xFAF50007,
+	CCCI_MD_MSG_STOP_MD_REQUEST	= 0xFAF50008,
+	CCCI_MD_MSG_START_MD_REQUEST	= 0xFAF50009,
+	CCCI_MD_MSG_ENTER_FLIGHT_MODE	= 0xFAF5000A,
+	CCCI_MD_MSG_LEAVE_FLIGHT_MODE	= 0xFAF5000B,
+	CCCI_MD_MSG_POWER_ON_REQUEST	= 0xFAF5000C,
+	CCCI_MD_MSG_POWER_OFF_REQUEST	= 0xFAF5000D,
+	CCCI_MD_MSG_SEND_BATTERY_INFO   = 0xFAF5000E,
+	CCCI_MD_MSG_NOTIFY		= 0xFAF5000F,
+	CCCI_MD_MSG_STORE_NVRAM_MD_TYPE = 0xFAF50010,
+	CCCI_MD_MSG_CFG_UPDATE			= 0xFAF50011,
+} CCCI_MD_MSG;
+
 /* export to other kernel modules, better not let other module include ECCCI header directly (except IPC...) */
 typedef enum {
 	MD_STATE_INVALID = 0,
@@ -302,20 +703,85 @@ enum {
 	MODEM_CAP_CCMNI_MQ = (1<<21), /* it must depend on DATA ACK DEVIDE feature */
 };
 
+/* AP<->MD messages on control or system channel */
+enum {
+	/* Control channel, MD->AP */
+	MD_INIT_START_BOOT = 0x0,
+	MD_NORMAL_BOOT = 0x0,
+	MD_NORMAL_BOOT_READY = 0x1, /* not using */
+	MD_META_BOOT_READY = 0x2, /* not using */
+	MD_RESET = 0x3, /* not using */
+	MD_EX = 0x4,
+	CCCI_DRV_VER_ERROR = 0x5,
+	MD_EX_REC_OK = 0x6,
+	MD_EX_RESUME = 0x7, /* not using */
+	MD_EX_PASS = 0x8,
+	MD_INIT_CHK_ID = 0x5555FFFF,
+	MD_EX_CHK_ID = 0x45584350,
+	MD_EX_REC_OK_CHK_ID = 0x45524543,
+
+	/* System channel, AP->MD || AP<-->MD message start from 0x100 */
+	MD_DORMANT_NOTIFY = 0x100,
+	MD_SLP_REQUEST = 0x101,
+	MD_TX_POWER = 0x102,
+	MD_RF_TEMPERATURE = 0x103,
+	MD_RF_TEMPERATURE_3G = 0x104,
+	MD_GET_BATTERY_INFO = 0x105,
+
+	MD_SIM_TYPE = 0x107,
+	MD_ICUSB_NOTIFY = 0x108,
+	/* 0x109 for md legacy use to crystal_thermal_change */
+	MD_LOW_BATTERY_LEVEL = 0x10A,
+	/* 0x10B-0x10C occupied by EEMCS */
+	MD_PAUSE_LTE = 0x10D,
+	MD_RESET_AP = 0x118,
+	/* swtp */
+	MD_SW_MD1_TX_POWER = 0x10E,
+	MD_SW_MD2_TX_POWER = 0x10F,
+	MD_SW_MD1_TX_POWER_REQ = 0x110,
+	MD_SW_MD2_TX_POWER_REQ = 0x111,
+	MD_THROTTLING = 0x112, /* SW throughput throttling */
+	/* TEST_MESSAGE for IT only */
+	TEST_MSG_ID_MD2AP = 0x114,
+	TEST_MSG_ID_AP2MD = 0x115,
+	TEST_MSG_ID_L1CORE_MD2AP = 0x116,
+	TEST_MSG_ID_L1CORE_AP2MD = 0x117,
+
+	CCISM_SHM_INIT = 0x119,
+	CCISM_SHM_INIT_ACK = 0x11A,
+	CCISM_SHM_INIT_DONE = 0x11B,
+	PMIC_INTR_MODEM_BUCK_OC = 0x11C,
+
+	/*c2k ctrl msg start from 0x200*/
+	C2K_STATUS_IND_MSG = 0x201, /* for usb bypass */
+	C2K_STATUS_QUERY_MSG = 0x202, /* for usb bypass */
+	C2K_HB_MSG = 0x207,
+	C2K_CCISM_SHM_INIT = 0x209,
+	C2K_CCISM_SHM_INIT_ACK = 0x20A,
+	C2K_CCISM_SHM_INIT_DONE = 0x20B,
+
+	/* System channel, MD->AP message start from 0x1000 */
+	MD_WDT_MONITOR = 0x1000,
+	/* System channel, AP->MD message */
+	MD_WAKEN_UP = 0x10000,
+};
+
+#define NORMAL_BOOT_ID 0
+#define META_BOOT_ID 1
+#define FACTORY_BOOT_ID	2
+
 typedef enum {
 	INVALID = 0, /* no traffic */
 	GATED, /* broadcast by modem driver, no traffic */
-	BOOT_WAITING_FOR_HS1, /* broadcast by modem driver */
-	BOOT_WAITING_FOR_HS2, /* broadcast by modem driver */
+	BOOTING, /* broadcast by modem driver */
 	READY, /* broadcast by port_kernel */
 	EXCEPTION, /* broadcast by port_kernel */
 	RESET, /* broadcast by modem driver, no traffic */
-	WAITING_TO_STOP,
 
 	RX_IRQ, /* broadcast by modem driver, illegal for md->md_state, only for NAPI! */
-	RX_FLUSH, /* broadcast by modem driver, illegal for md->md_state, only for GRO! */
 	TX_IRQ, /* broadcast by modem driver, illegal for md->md_state, only for network! */
 	TX_FULL, /* broadcast by modem driver, illegal for md->md_state, only for network! */
+	BOOT_FAIL, /* broadcast by port_kernel, illegal for md->md_state */
 } MD_STATE; /* for CCCI internal */
 
 /* ================================================================================= */
@@ -373,8 +839,52 @@ struct ccci_image_info {
 	struct IMG_REGION_INFO rmpu_info;  /* refion pinfo for RMPU setting */
 };
 
+struct ccci_dev_cfg {
+	unsigned int index;
+	unsigned int major;
+	unsigned int minor_base;
+	unsigned int capability;
+};
+
 typedef int (*get_status_func_t)(int, char*, int);
 typedef int (*boot_md_func_t)(int);
+
+/* Rutime data common part */
+typedef enum {
+	FEATURE_NOT_EXIST = 0,
+	FEATURE_NOT_SUPPORT,
+	FEATURE_SUPPORT,
+	FEATURE_PARTIALLY_SUPPORT,
+} MISC_FEATURE_STATE;
+
+typedef enum {
+	MISC_DMA_ADDR = 0,
+	MISC_32K_LESS,
+	MISC_RAND_SEED,
+	MISC_MD_COCLK_SETTING,
+	MISC_MD_SBP_SETTING,
+	MISC_MD_SEQ_CHECK,
+	MISC_MD_CLIB_TIME,
+	MISC_MD_C2K_ON,
+} MISC_FEATURE_ID;
+
+typedef enum {
+	MODE_UNKNOWN = -1,	  /* -1 */
+	MODE_IDLE,			  /* 0 */
+	MODE_USB,			   /* 1 */
+	MODE_SD,				/* 2 */
+	MODE_POLLING,		   /* 3 */
+	MODE_WAITSD,			/* 4 */
+} LOGGING_MODE;
+
+typedef enum {
+	HIF_EX_INIT = 0, /* interrupt */
+	HIF_EX_ACK, /* AP->MD */
+	HIF_EX_INIT_DONE, /* polling */
+	HIF_EX_CLEARQ_DONE, /* interrupt */
+	HIF_EX_CLEARQ_ACK, /* AP->MD */
+	HIF_EX_ALLQ_RESET, /* polling */
+} HIF_EX_STAGE;
 
 typedef enum {
 	SMEM_USER_RAW_DBM = 0,
@@ -384,6 +894,67 @@ typedef enum {
 	SMEM_USER_RAW_USB,
 	SMEM_USER_MAX,
 } SMEM_USER_ID;
+
+enum {
+	P_CORE = 0,
+	VOLTE_CORE,
+};
+
+/* runtime data format uses EEMCS's version, NOT the same with legacy CCCI */
+struct modem_runtime {
+	u32 Prefix;			 /* "CCIF" */
+	u32 Platform_L;		 /* Hardware Platform String ex: "TK6516E0" */
+	u32 Platform_H;
+	u32 DriverVersion;	  /* 0x00000923 since W09.23 */
+	u32 BootChannel;		/* Channel to ACK AP with boot ready */
+	u32 BootingStartID;	 /* MD is booting. NORMAL_BOOT_ID or META_BOOT_ID */
+#if 1 /* not using in EEMCS */
+	u32 BootAttributes;	 /* Attributes passing from AP to MD Booting */
+	u32 BootReadyID;		/* MD response ID if boot successful and ready */
+	u32 FileShareMemBase;
+	u32 FileShareMemSize;
+	u32 ExceShareMemBase;
+	u32 ExceShareMemSize;
+	u32 CCIFShareMemBase;
+	u32 CCIFShareMemSize;
+#ifdef FEATURE_SMART_LOGGING
+	u32 DHLShareMemBase; /* For DHL */
+	u32 DHLShareMemSize;
+#endif
+#ifdef FEATURE_MD1MD3_SHARE_MEM
+	u32 MD1MD3ShareMemBase; /* For MD1 MD3 share memory */
+	u32 MD1MD3ShareMemSize;
+#endif
+	u32 TotalShareMemBase;
+	u32 TotalShareMemSize;
+	u32 CheckSum;
+#endif
+	u32 Postfix; /* "CCIF" */
+#if 1 /* misc region */
+	u32 misc_prefix;	/* "MISC" */
+	u32 support_mask;
+	u32 index;
+	u32 next;
+	u32 feature_0_val[4];
+	u32 feature_1_val[4];
+	u32 feature_2_val[4];
+	u32 feature_3_val[4];
+	u32 feature_4_val[4];
+	u32 feature_5_val[4];
+	u32 feature_6_val[4];
+	u32 feature_7_val[4];
+	u32 feature_8_val[4];
+	u32 feature_9_val[4];
+	u32 feature_10_val[4];
+	u32 feature_11_val[4];
+	u32 feature_12_val[4];
+	u32 feature_13_val[4];
+	u32 feature_14_val[4];
+	u32 feature_15_val[4];
+	u32 reserved_2[3];
+	u32 misc_postfix;	/* "MISC" */
+#endif
+} __packed;
 
 typedef enum {
 	ID_GET_FDD_THERMAL_DATA = 0,
@@ -411,7 +982,6 @@ int ccci_sysfs_add_modem(int md_id, void *kobj, void *ktype,
 int get_modem_support_cap(int md_id); /* Export by ccci util */
 int set_modem_support_cap(int md_id, int new_val); /* Export by ccci util */
 char *ccci_get_md_info_str(int md_id); /* Export by ccci util */
-void get_md_postfix(int md_id, char k[], char buf[], char buf_ex[]); /* Export by ccci util */
 void update_ccci_port_ver(unsigned int new_ver); /* Export by ccci util */
 /* Export by ccci util */
 int ccci_load_firmware(int md_id, void *img_inf, char img_err_str[], char post_fix[], struct device *dev);

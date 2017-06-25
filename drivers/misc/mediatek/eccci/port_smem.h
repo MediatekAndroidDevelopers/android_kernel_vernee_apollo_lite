@@ -1,16 +1,3 @@
-/*
-* Copyright (C) 2016 MediaTek Inc.
-*
-* This program is free software; you can redistribute it and/or modify
-* it under the terms of the GNU General Public License version 2 as
-* published by the Free Software Foundation.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-* See http://www.gnu.org/licenses/gpl-2.0.html for more details.
-*/
-
 #ifndef __PORT_SMEM_H__
 #define __PORT_SMEM_H__
 
@@ -51,4 +38,10 @@ struct ccci_smem_port {
 	struct ccci_port *port;
 	wait_queue_head_t rx_wq;
 };
+
+int port_smem_init(struct ccci_port *port);
+int port_smem_tx_nofity(struct ccci_port *port, unsigned int user_data);
+int port_smem_rx_poll(struct ccci_port *port);
+int port_smem_rx_wakeup(struct ccci_port *port);
+
 #endif

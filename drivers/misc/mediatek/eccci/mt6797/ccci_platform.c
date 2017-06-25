@@ -23,7 +23,8 @@
 #endif
 #include <mt-plat/mt_ccci_common.h>
 #include "ccci_config.h"
-#include "ccci_modem.h"
+#include "ccci_core.h"
+#include "ccci_debug.h"
 #include "ccci_bm.h"
 #include "ccci_platform.h"
 
@@ -110,13 +111,13 @@ int Is_MD_EMI_voilation(void)
 /* #define MPU_REGION_ID_MD3_ROM       17
  * note that D3 was set to NO_PROTECTION, but the mpu indicate it be SEC_R_NSEC_R*/
 #define MPU_ACCESS_PERMISSON_MD3_ROM_ATTR    SET_ACCESS_PERMISSON(FORBIDDEN, FORBIDDEN, \
-	NO_PROTECTION, FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN, SEC_R_NSEC_R)
+	NO_PROTECTION, FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN, SEC_R_NSEC_R);
 /* #define MPU_REGION_ID_MD3_RW        18 */
 #define MPU_ACCESS_PERMISSON_MD3_RW_ATTR     SET_ACCESS_PERMISSON(FORBIDDEN, FORBIDDEN, \
-	NO_PROTECTION, FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN, SEC_R_NSEC_R)
+	NO_PROTECTION, FORBIDDEN, FORBIDDEN, FORBIDDEN, FORBIDDEN, SEC_R_NSEC_R);
 /* #define MPU_REGION_ID_MD3_SMEM      7 */
 #define MPU_ACCESS_PERMISSON_MD3_SMEM_ATTR   SET_ACCESS_PERMISSON(FORBIDDEN, FORBIDDEN, \
-	NO_PROTECTION, FORBIDDEN, NO_PROTECTION, FORBIDDEN, FORBIDDEN, NO_PROTECTION)
+	NO_PROTECTION, FORBIDDEN, NO_PROTECTION, FORBIDDEN, FORBIDDEN, NO_PROTECTION);
 /* #define MPU_REGION_ID_MD1MD3_SMEM   8, AP need to clear smem, so set it to NO_PROTECTION*/
 #define MPU_ACCESS_PERMISSON_MD1MD3_SMEM_ATTR   SET_ACCESS_PERMISSON(FORBIDDEN, FORBIDDEN, \
 	NO_PROTECTION, FORBIDDEN, FORBIDDEN, FORBIDDEN, NO_PROTECTION, NO_PROTECTION)
@@ -204,9 +205,8 @@ void ccci_clear_md_region_protection(struct ccci_modem *md)
 {
 #ifdef ENABLE_EMI_PROTECTION
 	unsigned int rom_mem_mpu_id, rw_mem_mpu_id;
-
 	if (modem_run_env_ready(md->index)) { /* LK has did it, bypass this step */
-		CCCI_BOOTUP_LOG(md->index, TAG, "Ignore Clear MPU for md%d\n", md->index+1);
+		CCCI_NORMAL_LOG(md->index, TAG, "Ignore Clear MPU for md%d\n", md->index+1);
 		return;
 	}
 	switch (md->index) {
@@ -219,17 +219,17 @@ void ccci_clear_md_region_protection(struct ccci_modem *md)
 		rw_mem_mpu_id = MPU_REGION_ID_MD3_RW;
 		break;
 	default:
-		CCCI_BOOTUP_LOG(md->index, TAG, "[error]MD ID invalid when clear MPU protect\n");
+		CCCI_NORMAL_LOG(md->index, TAG, "[error]MD ID invalid when clear MPU protect\n");
 		return;
 	}
 
-	CCCI_BOOTUP_LOG(md->index, TAG, "Clear MPU protect MD ROM region<%d>\n", rom_mem_mpu_id);
+	CCCI_NORMAL_LOG(md->index, TAG, "Clear MPU protect MD ROM region<%d>\n", rom_mem_mpu_id);
 	emi_mpu_set_region_protection(0,	/*START_ADDR */
 				      0,	/*END_ADDR */
 				      rom_mem_mpu_id,	/*region */
 				      MPU_ACCESS_PERMISSON_CLEAR);
 
-	CCCI_BOOTUP_LOG(md->index, TAG, "Clear MPU protect MD R/W region<%d>\n", rw_mem_mpu_id);
+	CCCI_NORMAL_LOG(md->index, TAG, "Clear MPU protect MD R/W region<%d>\n", rw_mem_mpu_id);
 	emi_mpu_set_region_protection(0,	/*START_ADDR */
 				      0,	/*END_ADDR */
 				      rw_mem_mpu_id,	/*region */
@@ -239,21 +239,21 @@ void ccci_clear_md_region_protection(struct ccci_modem *md)
 /* - Clear HW-related region protection -*/
 /*---------------------------------------*/
 	if (md->index == MD_SYS1) {
-		CCCI_BOOTUP_LOG(md->index, TAG, "Clear MPU protect HWRW R/W region<%d>\n",
+		CCCI_NORMAL_LOG(md->index, TAG, "Clear MPU protect HWRW R/W region<%d>\n",
 						MPU_REGION_ID_MD1_MCURW_HWRW);
 		emi_mpu_set_region_protection(0,                       /*START_ADDR*/
 						0,                       /*END_ADDR*/
 						MPU_REGION_ID_MD1_MCURW_HWRW,   /*region*/
 						MPU_ACCESS_PERMISSON_CLEAR);
 
-		CCCI_BOOTUP_LOG(md->index, TAG, "Clear MPU protect HWRW ROM region<%d>\n",
+	CCCI_NORMAL_LOG(md->index, TAG, "Clear MPU protect HWRW ROM region<%d>\n",
 						MPU_REGION_ID_MD1_MCURW_HWRO);
 	emi_mpu_set_region_protection(0,                       /*START_ADDR*/
 					0,                       /*END_ADDR*/
 					MPU_REGION_ID_MD1_MCURW_HWRO,   /*region*/
 					MPU_ACCESS_PERMISSON_CLEAR);
 
-		CCCI_BOOTUP_LOG(md->index, TAG, "Clear MPU protect HWRO R/W region<%d>\n",
+		CCCI_NORMAL_LOG(md->index, TAG, "Clear MPU protect HWRO R/W region<%d>\n",
 						MPU_REGION_ID_MD1_MCURO_HWRW);
 		emi_mpu_set_region_protection(0,                       /*START_ADDR*/
 						0,                       /*END_ADDR*/
@@ -803,38 +803,31 @@ int set_md_rom_rw_mem_remap(struct ccci_modem *md, phys_addr_t src, phys_addr_t 
 
 void ccci_set_mem_remap(struct ccci_modem *md, unsigned long smem_offset, phys_addr_t invalid)
 {
-	/*
-	 * MD bank4 is remap to nearest 32M aligned address
-	 * assume share memoy layout is:
-	 * |---AP/MD1--| <--MD1 bank4
-	 * |--MD1/MD3--| <--MD3 bank4
-	 * |---AP/MD3--|
-	 * this should align with LK's remap setting
-	 */
-	phys_addr_t md_bank4_base;
+	unsigned long remainder;
 
-	switch (md->index) {
-	case MD_SYS1:
-		md_bank4_base = round_down(md->mem_layout.smem_region_phy, 0x02000000);
-		break;
-	case MD_SYS3:
-		md_bank4_base = round_down(md->mem_layout.md1_md3_smem_phy, 0x02000000);
-		break;
-	default:
-		md_bank4_base = 0;
-		break;
-	}
+	if (is_4g_memory_size_support())
+		invalid &= 0xFFFFFFFF;
+	else
+		invalid -= KERN_EMI_BASE;
 	md->invalid_remap_base = invalid;
+	/* Set share memory remapping */
+#if 0	/* no hardware AP remap after MT6592 */
+	set_ap_smem_remap(md, 0x40000000, md->mem_layout.smem_region_phy_before_map);
+	md->mem_layout.smem_region_phy = smem_offset + 0x40000000;
+#endif
 	/*
-	 * AP_view_addr - md_bank4_base + 0x40000000 = MD_view_addr
-	 * AP_view_addr - smem_offset_AP_to_MD = MD_view_addr
+	 * always remap only the 1 slot where share memory locates. smem_offset is the offset between
+	 * ROM start address(32M align) and share memory start address.
+	 * (AP view smem address) - [(smem_region_phy) - (bank4 start address) - (un-32M-align space)]
+	 * = (MD view smem address)
 	 */
-	md->mem_layout.smem_offset_AP_to_MD = md_bank4_base - 0x40000000;
-	invalid = md->mem_layout.smem_region_phy + md->mem_layout.smem_region_size;
+	remainder = smem_offset % 0x02000000;
+	md->mem_layout.smem_offset_AP_to_MD = md->mem_layout.smem_region_phy - (remainder + 0x40000000);
+	set_md_smem_remap(md, 0x40000000, md->mem_layout.md_region_phy + (smem_offset - remainder), invalid);
+	CCCI_INIT_LOG(md->index, TAG, "AP to MD share memory offset 0x%X", md->mem_layout.smem_offset_AP_to_MD);
+
+	/* Set md image and rw runtime memory remapping */
 	set_md_rom_rw_mem_remap(md, 0x00000000, md->mem_layout.md_region_phy, invalid);
-	set_md_smem_remap(md, 0x40000000, md_bank4_base, invalid);
-	CCCI_NORMAL_LOG(md->index, TAG, "%s 0x%llX 0x%X\n", __func__,
-		(unsigned long long)md_bank4_base, md->mem_layout.smem_offset_AP_to_MD);
 }
 
 /*
@@ -884,7 +877,7 @@ static int ccci_md_low_power_notify(struct ccci_modem *md, LOW_POEWR_NOTIFY_TYPE
 			reserve = 0;	/* 0 */
 		else if (level == LOW_BATTERY_LEVEL_1 || level == LOW_BATTERY_LEVEL_2)
 			reserve = (1 << 6);	/* 64 */
-		ret = port_proxy_send_msg_to_md(md->port_proxy, CCCI_SYSTEM_TX, MD_LOW_BATTERY_LEVEL, reserve, 1);
+		ret = ccci_send_msg_to_md(md, CCCI_SYSTEM_TX, MD_LOW_BATTERY_LEVEL, reserve, 1);
 		if (ret)
 			CCCI_ERROR_LOG(md->index, TAG, "send low battery notification fail, ret=%d\n", ret);
 		break;
@@ -893,7 +886,7 @@ static int ccci_md_low_power_notify(struct ccci_modem *md, LOW_POEWR_NOTIFY_TYPE
 			reserve = 0;	/* 0 */
 		else if (level == BATTERY_PERCENT_LEVEL_1)
 			reserve = (1 << 6);	/* 64 */
-		ret = port_proxy_send_msg_to_md(md->port_proxy, CCCI_SYSTEM_TX, MD_LOW_BATTERY_LEVEL, reserve, 1);
+		ret = ccci_send_msg_to_md(md, CCCI_SYSTEM_TX, MD_LOW_BATTERY_LEVEL, reserve, 1);
 		if (ret)
 			CCCI_ERROR_LOG(md->index, TAG, "send battery percent notification fail, ret=%d\n", ret);
 		break;
@@ -910,7 +903,7 @@ static void ccci_md_low_battery_cb(LOW_BATTERY_LEVEL level)
 	struct ccci_modem *md;
 
 	for (idx = 0; idx < MAX_MD_NUM; idx++) {
-		md = ccci_md_get_modem_by_id(idx);
+		md = ccci_get_modem_by_id(idx);
 		if (md != NULL)
 			ccci_md_low_power_notify(md, LOW_BATTERY, level);
 	}
@@ -922,44 +915,12 @@ static void ccci_md_battery_percent_cb(BATTERY_PERCENT_LEVEL level)
 	struct ccci_modem *md;
 
 	for (idx = 0; idx < MAX_MD_NUM; idx++) {
-		md = ccci_md_get_modem_by_id(idx);
+		md = ccci_get_modem_by_id(idx);
 		if (md != NULL)
 			ccci_md_low_power_notify(md, BATTERY_PERCENT, level);
 	}
 }
 #endif
-
-#define PCCIF_BUSY (0x4)
-#define PCCIF_TCHNUM (0xC)
-#define PCCIF_ACK (0x14)
-#define PCCIF_CHDATA (0x100)
-#define PCCIF_SRAM_SIZE (512)
-
-void ccci_reset_ccif_hw(struct ccci_modem *md, int ccif_id, void __iomem *baseA, void __iomem *baseB)
-{
-	int i;
-	unsigned int tx_channel = 0;
-
-	/* clear occupied channel */
-	while (tx_channel < 16) {
-		if (ccci_read32(baseA, PCCIF_BUSY) & (1<<tx_channel))
-			ccci_write32(baseA, PCCIF_TCHNUM, tx_channel);
-
-		if (ccci_read32(baseB, PCCIF_BUSY) & (1<<tx_channel))
-			ccci_write32(baseB, PCCIF_TCHNUM, tx_channel);
-
-		tx_channel++;
-	}
-	/* clear un-ached channel */
-	ccci_write32(baseA, PCCIF_ACK, ccci_read32(baseB, PCCIF_BUSY));
-	ccci_write32(baseB, PCCIF_ACK, ccci_read32(baseA, PCCIF_BUSY));
-
-	/* clear SRAM */
-	for (i = 0; i < PCCIF_SRAM_SIZE/sizeof(unsigned int); i++) {
-		ccci_write32(baseA, PCCIF_CHDATA+i*sizeof(unsigned int), 0);
-		ccci_write32(baseB, PCCIF_CHDATA+i*sizeof(unsigned int), 0);
-	}
-}
 
 int ccci_platform_init(struct ccci_modem *md)
 {

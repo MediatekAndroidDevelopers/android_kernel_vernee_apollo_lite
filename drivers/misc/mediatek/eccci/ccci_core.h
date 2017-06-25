@@ -25,10 +25,9 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <mt-plat/mt_ccci_common.h>
-#include "ccci_config.h"
 #include "ccci_debug.h"
-#include "ccci_fsm.h"
 
+#define CCCI_DEV_NAME "ccci"
 #define CCCI_MAGIC_NUM 0xFFFFFFFF
 #define MAX_TXQ_NUM 8
 #define MAX_RXQ_NUM 8
@@ -43,21 +42,28 @@
 #define EX_TIMER_MD_EX 5
 #define EX_TIMER_MD_EX_REC_OK 10
 #define EX_EE_WHOLE_TIMEOUT  (EX_TIMER_SWINT + EX_TIMER_MD_EX + EX_TIMER_MD_EX_REC_OK + 2) /* 2s is buffer */
-
-#define CCCI_BUF_MAGIC 0xFECDBA89
-
-/*
-  * this is a trick for port->minor, which is configured in-sequence by different type (char, net, ipc),
-  * but when we use it in code, we need it's unique among all ports for addressing.
-  */
-#define CCCI_IPC_MINOR_BASE 100
-#define CCCI_NET_MINOR_BASE 200
+#define BOOT_TIMER_HS2 10
 
 struct ccci_log {
 	struct ccci_header msg;
 	u64 tv;
 	int droped;
 };
+
+struct ccci_md_attribute {
+	struct attribute attr;
+	struct ccci_modem *modem;
+	 ssize_t (*show)(struct ccci_modem *md, char *buf);
+	 ssize_t (*store)(struct ccci_modem *md, const char *buf, size_t count);
+};
+
+#define CCCI_MD_ATTR(_modem, _name, _mode, _show, _store)	\
+static struct ccci_md_attribute ccci_md_attr_##_name = {	\
+	.attr = {.name = __stringify(_name), .mode = _mode },	\
+	.modem = _modem,					\
+	.show = _show,						\
+	.store = _store,					\
+}
 
 enum ccci_ipi_op_id {
 	CCCI_OP_SCP_STATE,
@@ -85,6 +91,15 @@ struct ccci_ipi_msg {
 } __packed;
 
 /* enumerations and marcos */
+
+typedef enum {
+	MD_BOOT_STAGE_0 = 0,
+	MD_BOOT_STAGE_1 = 1,
+	MD_BOOT_STAGE_2 = 2,
+	MD_BOOT_STAGE_EXCEPTION = 3,
+	MD_ACK_SCP_INIT = 4, /* for SCP sync convinince, not legal for md->boot_stage */
+} MD_BOOT_STAGE;		/* for other module */
+
 typedef enum {
 	EX_NONE = 0,
 	EX_INIT,
@@ -93,15 +108,305 @@ typedef enum {
 	/* internal use */
 	MD_NO_RESPONSE,
 	MD_WDT,
-	MD_BOOT_TIMEOUT,
 } MD_EX_STAGE;
 
+#ifdef MD_UMOLY_EE_SUPPORT
+#define MD_HS1_FAIL_DUMP_SIZE  (2048)
+#endif
 
 typedef enum {
-	MD_FLIGHT_MODE_NONE = 0,
-	MD_FLIGHT_MODE_ENTER = 1,
-	MD_FLIGHT_MODE_LEAVE = 2
+	MD_FIGHT_MODE_NONE = 0,
+	MD_FIGHT_MODE_ENTER = 1,
+	MD_FIGHT_MODE_LEAVE = 2
 } FLIGHT_STAGE;		/* for other module */
+
+/* MODEM MAUI Exception header (4 bytes)*/
+typedef struct _exception_record_header_t {
+	u8 ex_type;
+	u8 ex_nvram;
+	u16 ex_serial_num;
+} __packed EX_HEADER_T;
+
+/* MODEM MAUI Environment information (164 bytes) */
+typedef struct _ex_environment_info_t {
+	u8 boot_mode;		/* offset: +0x10 */
+	u8 reserved1[8];
+	u8 execution_unit[8];
+	u8 status;		/* offset: +0x21, length: 1 */
+	u8 ELM_status;		/* offset: +0x22, length: 1 */
+	u8 reserved2[145];
+} __packed EX_ENVINFO_T;
+
+/* MODEM MAUI Special for fatal error (8 bytes)*/
+typedef struct _ex_fatalerror_code_t {
+	u32 code1;
+	u32 code2;
+} __packed EX_FATALERR_CODE_T;
+
+/* MODEM MAUI fatal error (296 bytes)*/
+typedef struct _ex_fatalerror_t {
+	EX_FATALERR_CODE_T error_code;
+	u8 reserved1[288];
+} __packed EX_FATALERR_T;
+
+/* MODEM MAUI Assert fail (296 bytes)*/
+/* enlarge file name zone only for C2K */
+typedef struct _ex_assert_fail_t {
+	u8 filename[64];
+	u32 linenumber;
+	u32 parameters[3];
+	u8 reserved1[216];
+} __packed EX_ASSERTFAIL_T;
+
+/* MODEM MAUI Globally exported data structure (300 bytes) */
+typedef union {
+	EX_FATALERR_T fatalerr;
+	EX_ASSERTFAIL_T assert;
+} __packed EX_CONTENT_T;
+
+/* MODEM MAUI Standard structure of an exception log ( */
+typedef struct _ex_exception_log_t {
+	EX_HEADER_T header;
+	u8 reserved1[12];
+	EX_ENVINFO_T envinfo;
+	u8 reserved2[36];
+	EX_CONTENT_T content;
+} __packed EX_LOG_T;
+
+#ifdef MD_UMOLY_EE_SUPPORT
+/* MD32 exception struct */
+typedef enum {
+	CMIF_MD32_EX_INVALID = 0,
+	CMIF_MD32_EX_ASSERT_LINE,
+	CMIF_MD32_EX_ASSERT_EXT,
+	CMIF_MD32_EX_FATAL_ERROR,
+	CMIF_MD32_EX_FATAL_ERROR_EXT,
+} CMIF_MD32_EX_TYPE;
+
+typedef struct ex_fatalerr_md32_ {
+	unsigned int ex_code[2];
+	unsigned int ifabtpc;
+	unsigned int ifabtcau;
+	unsigned int daabtcau;
+	unsigned int daabtpc;
+	unsigned int daabtad;
+	unsigned int daabtsp;
+	unsigned int lr;
+	unsigned int sp;
+	unsigned int interrupt_count;
+	unsigned int vic_mask;
+	unsigned int vic_pending;
+	unsigned int cirq_mask_31_0;
+	unsigned int cirq_mask_63_32;
+	unsigned int cirq_pend_31_0;
+	unsigned int cirq_pend_63_32;
+} __packed EX_FATALERR_MD32;
+
+typedef struct ex_assertfail_md32_ {
+	u32 ex_code[3];
+	u32 line_num;
+	char file_name[64];
+} __packed EX_ASSERTFAIL_MD32;
+
+typedef union {
+	EX_FATALERR_MD32 fatalerr;
+	EX_ASSERTFAIL_MD32 assert;
+} __packed EX_MD32_CONTENT_T;
+
+#define MD32_FDD_ROCODE   "FDD_ROCODE"
+#define MD32_TDD_ROCODE   "TDD_ROCODE"
+typedef struct _ex_md32_log_ {
+	u32 finish_fill;
+	u32 except_type;
+	EX_MD32_CONTENT_T except_content;
+	unsigned int ex_log_mem_addr;
+	unsigned int md32_active_mode;
+} __packed EX_MD32_LOG_T;
+
+/* CoreSonic exception struct */
+typedef enum {
+	CS_EXCEPTION_ASSERTION = 0x45584300,
+	CS_EXCEPTION_FATAL_ERROR = 0x45584301,
+	CS_EXCEPTION_CTI_EVENT = 0x45584302,
+	CS_EXCEPTION_UNKNOWN = 0x45584303,
+} CS_EXCEPTION_TYPE_T;
+
+typedef struct ex_fatalerr_cs_ {
+	u32 error_status;
+	u32 error_pc;
+	u32 error_lr;
+	u32 error_address;
+	u32 error_code1;
+	u32 error_code2;
+} __packed EX_FATALERR_CS;
+
+typedef struct ex_assertfail_cs_ {
+	u32 line_num;
+	u32 para1;
+	u32 para2;
+	u32 para3;
+	char file_name[128];
+} __packed EX_ASSERTFAIL_CS;
+
+typedef union {
+	EX_FATALERR_CS fatalerr;
+	EX_ASSERTFAIL_CS assert;
+} __packed EX_CS_CONTENT_T;
+
+typedef struct _ex_cs_log_t {
+	u32 except_type;
+	EX_CS_CONTENT_T except_content;
+} __packed  EX_CS_LOG_T;
+
+/* PCORE, L1CORE exception struct */
+enum {
+	MD_EX_PL_INVALID = 0,
+	MD_EX_PL_UNDEF = 1,
+	MD_EX_PL_SWI = 2,
+	MD_EX_PL_PREF_ABT = 3,
+	MD_EX_PL_DATA_ABT = 4,
+	MD_EX_PL_STACKACCESS = 5,
+
+	MD_EX_PL_FATALERR_TASK = 6,
+	MD_EX_PL_FATALERR_BUF = 7,
+	MD_EX_PL_FATALE_TOTAL,
+	MD_EX_PL_ASSERT_FAIL = 16,
+	MD_EX_PL_ASSERT_DUMP = 17,
+	MD_EX_PL_ASSERT_NATIVE = 18,
+	MD_EX_CC_INVALID_EXCEPTION = 0x20,
+	MD_EX_CC_PCORE_EXCEPTION = 0x21,
+	MD_EX_CC_L1CORE_EXCEPTION = 0x22,
+	MD_EX_CC_CS_EXCEPTION = 0x23,
+	MD_EX_CC_MD32_EXCEPTION = 0x24,
+	MD_EX_CC_C2K_EXCEPTION = 0x25,
+	MD_EX_CC_ARM7_EXCEPTION = 0x26,
+	MD_EX_OTHER_CORE_EXCEPTIN,
+
+	EMI_MPU_VIOLATION = 0x30,
+	/* NUM_EXCEPTION, */
+
+};
+
+/* MD core list */
+typedef enum {
+	MD_PCORE,
+	MD_L1CORE,
+	MD_CS_ICC,
+	MD_CS_IMC,
+	MD_CS_MPC,
+	MD_MD32_DFE,
+	MD_MD32_BRP,
+	MD_MD32_RAKE,
+	MD_CORE_NUM
+} MD_CORE_NAME;
+typedef struct _exp_pl_header_t {
+	u32 ex_core_id;
+	u8 ex_type;
+	u8 ex_nvram;
+	u16 ex_serial_num;
+} __packed EX_PL_HEADER_T;
+typedef struct ex_time_stamp {
+	u32 USCNT;
+	u32 GLB_TS;
+} EX_TIME_STAMP;
+typedef struct _ex_pl_environment_info_t {
+	EX_TIME_STAMP ex_timestamp;
+	u8 boot_mode;		/* offset: +0x10 */
+	u8 execution_unit[8];
+	u8 status;		/* offset: +0x21, length: 1 */
+	u8 ELM_status;		/* offset: +0x22, length: 1 */
+	u8 reserved2;
+	unsigned int stack_ptr;
+	u8 stack_dump[40];
+	u16 ext_queue_pending_cnt;
+	u16 interrupt_mask3;
+	u8 ext_queue_pending[80];
+	u8 interrupt_mask[8];
+	u32 processing_lisr;
+	u32 lr;
+} __packed EX_PL_ENVINFO_T;
+typedef struct _ex_pl_fatalerror_code_t {
+	u32 code1;
+	u32 code2;
+	u32 code3;
+} __packed EX_PL_FATALERR_CODE_T;
+
+typedef struct _ex_pl_analysis_t {
+	u32 trace;
+	u8 param[40];
+	u8 owner[8];
+	unsigned char core[7];
+	u8 is_cadefa_sup;
+} __packed EX_PL_ANALYSIS_T;
+
+typedef struct _ex_pl_fatalerror_t {
+	EX_PL_FATALERR_CODE_T error_code;
+	u8 description[20];
+	EX_PL_ANALYSIS_T ex_analy;
+	u8 reserved1[356];
+} __packed EX_PL_FATALERR_T;
+
+typedef struct _ex_pl_assert_t {
+	u8 filepath[256];
+	u8 filename[64];
+	u32 linenumber;
+	u32 para[3];
+	u8 reserved1[368];
+	u8 guard[4];
+} __packed EX_PL_ASSERTFAIL_T;
+
+typedef struct _ex_pl_diagnosisinfo_t {
+	u8 diagnosis;
+	char owner[8];
+	u8 reserve[3];
+	u8 timing_check[24];
+} __packed EX_PL_DIAGNOSISINFO_T;
+
+typedef union {
+	EX_PL_FATALERR_T fatalerr;
+	EX_PL_ASSERTFAIL_T assert;
+} __packed EX_PL_CONTENT_T;
+
+typedef struct _ex_exp_PL_log_t {
+	EX_PL_HEADER_T header; /* 8 bytes */
+	char sw_ver[32]; /* 4 bytes: 8 */
+	char sw_project_name[32];  /* 8: 12 */
+	char sw_flavor[32];/* 8:20 */
+	char sw_buildtime[16];/* 4: 28 */
+	EX_PL_ENVINFO_T envinfo;/* : 32 */
+	EX_PL_DIAGNOSISINFO_T diagnoinfo; /* 36:  */
+	EX_PL_CONTENT_T content;
+} __packed EX_PL_LOG_T;
+
+/* exception overview struct */
+#define MD_CORE_TOTAL_NUM   (8)
+#define MD_CORE_NAME_LEN    (11)
+#define MD_CORE_NAME_DEBUG  (MD_CORE_NAME_LEN + 5 + 16) /* +5 for 16, +16 for md32 TDD FDD */
+#define ECT_SRC_NONE    (0x0)
+#define ECT_SRC_PS      (0x1 << 0)
+#define ECT_SRC_L1      (0x1 << 1)
+#define ECT_SRC_MD32    (0x1 << 2)
+#define ECT_SRC_CS      (0x1 << 3)
+#define ECT_SRC_ARM7    (0x1 << 10)
+#define ECT_SRC_RMPU    (0x1 << 11)
+#define ECT_SRC_C2K     (0x1 << 12)
+
+typedef struct ex_main_reason_t {
+	u32 core_offset;
+	u8 is_offender;
+	char core_name[MD_CORE_NAME_LEN];
+} __packed EX_MAIN_REASON_T;
+
+typedef struct ex_overview_t {
+	u32 core_num;
+	EX_MAIN_REASON_T main_reson[MD_CORE_TOTAL_NUM];
+	u32 ect_status;
+	u32 cs_status;
+	u32 md32_status;
+} __packed EX_OVERVIEW_T;
+
+/* #define CCCI_EXREC_OFFSET_OFFENDER1 396 */
+#endif
 
 typedef struct _ccci_msg {
 	union {
@@ -118,6 +423,55 @@ typedef struct _ccci_msg {
 	u32 reserved;
 } __packed ccci_msg_t;
 
+typedef struct dump_debug_info {
+	unsigned int type;
+	char *name;
+#ifdef MD_UMOLY_EE_SUPPORT
+	char core_name[MD_CORE_NAME_DEBUG];
+#endif
+	unsigned int more_info;
+	union {
+		struct {
+#ifdef MD_UMOLY_EE_SUPPORT
+			char file_name[256]; /* use pCore: file path, contain file name */
+#else
+			char file_name[30];
+#endif
+			int line_num;
+			unsigned int parameters[3];
+		} assert;
+		struct {
+			int err_code1;
+			int err_code2;
+#ifdef MD_UMOLY_EE_SUPPORT
+			int err_code3;
+			char *ExStr;
+#endif
+			char offender[9];
+		} fatal_error;
+		ccci_msg_t data;
+		struct {
+			unsigned char execution_unit[9];	/* 8+1 */
+			char file_name[30];
+			int line_num;
+			unsigned int parameters[3];
+		} dsp_assert;
+		struct {
+			unsigned char execution_unit[9];
+			unsigned int code1;
+		} dsp_exception;
+		struct {
+			unsigned char execution_unit[9];
+			unsigned int err_code[2];
+		} dsp_fatal_err;
+	};
+	void *ext_mem;
+	size_t ext_size;
+	void *md_image;
+	size_t md_size;
+	void *platform_data;
+	void (*platform_call)(void *data);
+} DEBUG_INFO_T;
 
 typedef enum {
 	IDLE = 0,		/* update by buffer manager */
@@ -138,20 +492,87 @@ typedef enum {
  * Rx: policy is determined by receiver;
  */
 typedef enum {
-	FREE = 0,		/* simply free the skb */
+	NOOP = 0,		/* don't handle the skb, just recycle the reqeuest wrapper */
 	RECYCLE,		/* put the skb back into our pool */
+	FREE,			/* simply free the skb */
 } DATA_POLICY;
 
-/* ccci buffer control structure. Must be less than NET_SKB_PAD */
-struct ccci_buffer_ctrl {
-	unsigned int head_magic;
+/* core classes */
+struct ccci_request {
+	struct sk_buff *skb;
+
+	struct list_head entry;
 	DATA_POLICY policy;
+	REQ_STATE state;
+	unsigned char blocking;	/* only for Tx */
 	unsigned char ioc_override;	/* bit7: override or not; bit0: IOC setting */
-	unsigned char blocking;
 };
 
 struct ccci_modem;
 struct ccci_port;
+
+struct ccci_port_ops {
+	/* must-have */
+	int (*init)(struct ccci_port *port);
+	int (*recv_request)(struct ccci_port *port, struct ccci_request *req);
+	int (*recv_skb)(struct ccci_port *port, struct sk_buff *skb);
+	/* optional */
+	int (*req_match)(struct ccci_port *port, struct ccci_request *req);
+	void (*md_state_notice)(struct ccci_port *port, MD_STATE state);
+	void (*dump_info)(struct ccci_port *port, unsigned flag);
+};
+
+struct ccci_port {
+	/* don't change the sequence unless you modified modem drivers as well */
+	/* identity */
+	CCCI_CH tx_ch;
+	CCCI_CH rx_ch;
+	/*
+	 * 0xF? is used as invalid index number,  all virtual ports should use queue 0, but not 0xF?.
+	 * always access queue index by using PORT_TXQ_INDEX and PORT_RXQ_INDEX macros.
+	 * modem driver should always use >valid_queue_number to check invalid index, but not
+	 * using ==0xF? style.
+	 *
+	 * here is a nasty trick, we assume no modem provide more than 0xF0 queues, so we use
+	 * the lower 4 bit to smuggle info for network ports.
+	 * Attention, in this trick we assume hardware queue index for net port will not exceed 0xF.
+	 * check NET_ACK_TXQ_INDEX@port_net.c
+	 */
+	unsigned char txq_index;
+	unsigned char rxq_index;
+	unsigned char txq_exp_index;
+	unsigned char rxq_exp_index;
+	unsigned char flags;
+	struct ccci_port_ops *ops;
+	/* device node related */
+	unsigned int minor;
+	char *name;
+	/* un-initiallized in defination, always put them at the end */
+	struct ccci_modem *modem;
+	void *private_data;
+	atomic_t usage_cnt;
+	struct list_head entry;
+	/*
+	 * the Tx and Rx flow are asymmetric due to ports are mutilplexed on queues.
+	 * Tx: data block are sent directly to queue's list, so port won't maitain a Tx list. It only
+	 provide a wait_queue_head for blocking write.
+	 * Rx: due to modem needs to dispatch Rx packet as quickly as possible, so port needs a
+	 *      Rx list to hold packets.
+	 */
+	struct list_head rx_req_list;
+	spinlock_t rx_req_lock;
+	wait_queue_head_t rx_wq;	/* for uplayer user */
+	int rx_length;
+	int rx_length_th;
+	struct wake_lock rx_wakelock;
+	unsigned int tx_busy_count;
+	unsigned int rx_busy_count;
+	int interception;
+};
+#define PORT_F_ALLOW_DROP	(1<<0)	/* packet will be dropped if port's Rx buffer full */
+#define PORT_F_RX_FULLED	(1<<1)	/* rx buffer has been full once */
+#define PORT_F_USER_HEADER	(1<<2)	/* CCCI header will be provided by user, but not by CCCI */
+#define PORT_F_RX_EXCLUSIVE	(1<<3)	/* Rx queue only has this one port */
 
 struct ccci_modem_cfg {
 	unsigned int load_type;
@@ -161,6 +582,7 @@ struct ccci_modem_cfg {
 #define MD_SETTING_ENABLE (1<<0)
 #define MD_SETTING_RELOAD (1<<1)
 #define MD_SETTING_FIRST_BOOT (1<<2)	/* this is the first time of boot up */
+#define MD_SETTING_STOP_RETRY_BOOT (1<<3)
 #define MD_SETTING_DUMMY  (1<<7)
 
 struct ccci_mem_layout {	/* all from AP view, AP has no haredware remap after MT6592 */
@@ -235,8 +657,6 @@ struct ccci_smem_layout {
 	void __iomem *ccci_exp_smem_sleep_debug_vir;
 	unsigned int ccci_exp_smem_sleep_debug_size;
 	void __iomem *ccci_exp_smem_dbm_debug_vir;
-	void __iomem *ccci_exp_smem_force_assert_vir;
-	unsigned int ccci_exp_smem_force_assert_size;
 };
 
 typedef enum {
@@ -253,7 +673,6 @@ typedef enum {
 	DUMP_FLAG_MD_WDT = (1 << 10),
 	DUMP_FLAG_SMEM_CCISM = (1<<11),
 	DUMP_MD_BOOTUP_STATUS = (1<<12),
-	DUMP_FLAG_IRQ_STATUS = (1<<13),
 } MODEM_DUMP_FLAG;
 
 typedef enum {
@@ -270,19 +689,9 @@ typedef enum {
 } LOW_POEWR_NOTIFY_TYPE;
 
 typedef enum {
-	MD_FORCE_ASSERT_RESERVE = 0x000,
-	MD_FORCE_ASSERT_BY_MD_NO_RESPONSE	= 0x100,
-	MD_FORCE_ASSERT_BY_MD_SEQ_ERROR		= 0x200,
-	MD_FORCE_ASSERT_BY_AP_Q0_BLOCKED	= 0x300,
-	MD_FORCE_ASSERT_BY_USER_TRIGGER		= 0x400,
-	MD_FORCE_ASSERT_BY_MD_WDT			= 0x500,
-	MD_FORCE_ASSERT_BY_AP_MPU			= 0x600,
-} MD_FORCE_ASSERT_TYPE;
-
-typedef enum {
 	CCCI_MESSAGE,
 	CCIF_INTERRUPT,
-	CCIF_MPU_INTR,
+	CCIF_INTR_SEQ,
 } MD_COMM_TYPE;
 
 typedef enum {
@@ -290,19 +699,36 @@ typedef enum {
 	MD_STATUS_ASSERTED = (1 << 1),
 } MD_STATUS_POLL_FLAG;
 
-typedef enum {
-	OTHER_MD_NONE,
-	OTHER_MD_STOP,
-	OTHER_MD_RESET,
-	OTHER_MD_ENTER_FLIGHT_MODE,
-} OTHER_MD_OPS;
-
-struct ccci_force_assert_shm_fmt {
-	unsigned int  error_code;
-	unsigned int  param[3];
-	unsigned char reserved[0];
+struct ccci_modem_ops {
+	/* must-have */
+	int (*init)(struct ccci_modem *md);
+	int (*start)(struct ccci_modem *md);
+	int (*reset)(struct ccci_modem *md);	/* as pre-stop */
+	int (*stop)(struct ccci_modem *md, unsigned int timeout);
+	int (*soft_start)(struct ccci_modem *md, unsigned int mode);
+	int (*soft_stop)(struct ccci_modem *md, unsigned int mode);
+	int (*send_request)(struct ccci_modem *md, unsigned char txqno, struct ccci_request *req,
+			     struct sk_buff *skb);
+	int (*give_more)(struct ccci_modem *md, unsigned char rxqno);
+	int (*write_room)(struct ccci_modem *md, unsigned char txqno);
+	int (*start_queue)(struct ccci_modem *md, unsigned char qno, DIRECTION dir);
+	int (*stop_queue)(struct ccci_modem *md, unsigned char qno, DIRECTION dir);
+	int (*napi_poll)(struct ccci_modem *md, unsigned char rxqno, struct napi_struct *napi, int weight);
+	int (*send_runtime_data)(struct ccci_modem *md, unsigned int sbp_code);
+	int (*broadcast_state)(struct ccci_modem *md, MD_STATE state);
+	int (*force_assert)(struct ccci_modem *md, MD_COMM_TYPE type);
+	int (*dump_info)(struct ccci_modem *md, MODEM_DUMP_FLAG flag, void *buff, int length);
+	struct ccci_port *(*get_port_by_minor)(struct ccci_modem *md, int minor);
+	/*
+	 * here we assume Rx and Tx channels are in the same address space,
+	 * and Rx channel should be check first, so user can save one comparison if it always sends
+	 * in Rx channel ID to identify a port.
+	 */
+	struct ccci_port *(*get_port_by_channel)(struct ccci_modem *md, CCCI_CH ch);
+	int (*low_power_notify)(struct ccci_modem *md, LOW_POEWR_NOTIFY_TYPE type, int level);
+	int (*ee_callback)(struct ccci_modem *md, MODEM_EE_FLAG flag);
+	int (*send_ccb_tx_notify)(struct ccci_modem *md, int core_id);
 };
-
 
 typedef void __iomem *(*smem_sub_region_cb_t)(void *md_blk, int *size_o);
 
@@ -328,16 +754,10 @@ typedef enum{
 	DHL_RAW_SHARE_MEMORY,
 	DT_NETD_SHARE_MEMORY,
 	DT_USB_SHARE_MEMORY,
-	EE_AFTER_EPOF,
-	CCMNI_MTU, /* max Rx packet buffer size on AP side */
-	MISC_INFO_CUSTOMER_VAL = 21,
-	CCCI_FAST_HEADER = 22,
-	MISC_INFO_C2K_MEID = 24,
-	MD_RUNTIME_FEATURE_ID_MAX,
+	RUNTIME_FEATURE_ID_MAX,
 } MD_CCCI_RUNTIME_FEATURE_ID;
 
 typedef enum{
-	AT_CHANNEL_NUM = 0,
 	AP_RUNTIME_FEATURE_ID_MAX,
 } AP_CCCI_RUNTIME_FEATURE_ID;
 
@@ -359,7 +779,7 @@ struct ccci_runtime_feature {
 	struct ccci_feature_support support_info;
 	u8 reserved[2];
 	u32 data_len;
-	u8 data[0];
+	u32 data[0];
 };
 
 struct ccci_runtime_boot_info {
@@ -401,570 +821,284 @@ struct ap_query_md_feature {
 	u32 tail_pattern;
 };
 /*********************************************/
-typedef enum {
-	MD_BOOT_MODE_INVALID = 0,
-	MD_BOOT_MODE_NORMAL,
-	MD_BOOT_MODE_META,
-	MD_BOOT_MODE_MAX,
-} MD_BOOT_MODE;
 
-enum {
-	CRIT_USR_FS,
-	CRIT_USR_MUXD,
-	CRIT_USR_MDLOG,
-	CRIT_USR_META,
-	CRIT_USR_MDLOG_CTRL = CRIT_USR_META,
-	CRIT_USR_MAX,
+struct ccci_modem {
+	unsigned char index;
+	unsigned char *private_data;
+	struct list_head rx_ch_ports[CCCI_MAX_CH_NUM];	/* port list of each Rx channel, for Rx dispatching */
+	short seq_nums[2][CCCI_MAX_CH_NUM];
+	unsigned int capability;
+
+	volatile MD_STATE md_state;	/* check comments below, put it here for cache benefit */
+	struct ccci_modem_ops *ops;
+	atomic_t wakeup_src;
+	struct ccci_port *ports;
+
+	struct list_head entry;
+	unsigned char port_number;
+	char post_fix[IMG_POSTFIX_LEN];
+	unsigned int major;
+	unsigned int minor_base;
+	struct kobject kobj;
+	struct ccci_mem_layout mem_layout;
+	struct ccci_smem_layout smem_layout;
+	struct ccci_image_info img_info[IMG_NUM];
+	unsigned int sim_type;
+	unsigned int sbp_code;
+	unsigned int sbp_code_default;
+	unsigned int mdlg_mode;
+	unsigned char critical_user_active[4];
+	unsigned int md_img_exist[MAX_IMG_NUM];
+	unsigned int md_img_type_is_set;
+	struct platform_device *plat_dev;
+	/*
+	 * the following members are readonly for CCCI core. they are maintained by modem and
+	 * port_kernel.c.
+	 * port_kernel.c should not be considered as part of CCCI core, we just move common part
+	 * of modem message handling into this file. current modem all follows the same message
+	 * protocol during bootup and exception. if future modem abandoned this protocl, we can
+	 * simply replace function set of kernel port to support it.
+	 */
+	volatile MD_BOOT_STAGE boot_stage;
+	MD_EX_STAGE ex_stage;	/* only for logging */
+	phys_addr_t invalid_remap_base;
+	struct ccci_modem_cfg config;
+	struct timer_list bootup_timer;
+	struct timer_list ex_monitor;
+	struct timer_list ex_monitor2;
+	struct timer_list md_status_poller;
+	struct timer_list md_status_timeout;
+	unsigned int md_status_poller_flag;
+	spinlock_t ctrl_lock;
+	volatile unsigned int ee_info_flag;
+	DEBUG_INFO_T debug_info;
+#ifdef MD_UMOLY_EE_SUPPORT
+	DEBUG_INFO_T debug_info1[MD_CORE_NUM - 1];
+	unsigned char ex_core_num;
+#endif
+	unsigned char flight_mode;
+	unsigned char ex_type;
+	EX_LOG_T ex_info;
+#ifdef MD_UMOLY_EE_SUPPORT
+	/* EX_PL_LOG_T ex_pl_info; */
+	unsigned char ex_pl_info[MD_HS1_FAIL_DUMP_SIZE]; /* request by modem, change to 2k: include EX_PL_LOG_T*/
+#endif
+	unsigned short heart_beat_counter;
+	int dtr_state; /* only for usb bypass */
+#if PACKET_HISTORY_DEPTH
+	struct ccci_log tx_history[MAX_TXQ_NUM][PACKET_HISTORY_DEPTH];
+	struct ccci_log rx_history[MAX_RXQ_NUM][PACKET_HISTORY_DEPTH];
+	int tx_history_ptr[MAX_TXQ_NUM];
+	int rx_history_ptr[MAX_RXQ_NUM];
+#endif
+	unsigned long logic_ch_pkt_cnt[CCCI_MAX_CH_NUM];
+	unsigned long logic_ch_pkt_pre_cnt[CCCI_MAX_CH_NUM];
+#ifdef CCCI_SKB_TRACE
+	unsigned long long netif_rx_profile[8];
+#endif
+	int data_usb_bypass;
+	int runtime_version;
+#ifdef FEATURE_SCP_CCCI_SUPPORT
+	struct work_struct scp_md_state_sync_work;
+#endif
+	/* unsigned char private_data[0];
+	do NOT use this manner, otherwise spinlock inside private_data will trigger alignment exception */
+	char md_wakelock_name[32];
+	struct wake_lock md_wake_lock;
 };
 
-enum {
-	MD_DBG_DUMP_INVALID = -1,
-	MD_DBG_DUMP_TOPSM = 0,
-	MD_DBG_DUMP_PCMON,
-	MD_DBG_DUMP_BUSREC,
-	MD_DBG_DUMP_MDRGU,
-	MD_DBG_DUMP_OST,
-	MD_DBG_DUMP_BUS,
-	MD_DBG_DUMP_PLL,
-	MD_DBG_DUMP_ECT,
+/* APIs */
+extern void ccci_free_req(struct ccci_request *req);
+extern void ccci_md_exception_notify(struct ccci_modem *md, MD_EX_STAGE stage);
 
-	MD_DBG_DUMP_SMEM,
-	MD_DBG_DUMP_PORT = 0x60000000,
-	MD_DBG_DUMP_ALL = 0x7FFFFFFF,
-};
+static inline void ccci_setup_channel_mapping(struct ccci_modem *md)
+{
+	int i;
+	struct ccci_port *port = NULL;
+	/* setup mapping */
+	for (i = 0; i < ARRAY_SIZE(md->rx_ch_ports); i++)
+		INIT_LIST_HEAD(&md->rx_ch_ports[i]);	/* clear original list */
+	for (i = 0; i < md->port_number; i++)
+		list_add_tail(&md->ports[i].entry, &md->rx_ch_ports[md->ports[i].rx_ch]);
+	for (i = 0; i < ARRAY_SIZE(md->rx_ch_ports); i++) {
+		if (!list_empty(&md->rx_ch_ports[i])) {
+			list_for_each_entry(port, &md->rx_ch_ports[i], entry) {
+				CCCI_DEBUG_LOG(md->index, CORE, "CH%d ports:%s(%d/%d)\n",
+					i, port->name, port->rx_ch, port->tx_ch);
+			}
+		}
+	}
+}
 
-enum {
-	MD_CFG_MDLOG_MODE,
-	MD_CFG_SBP_CODE,
-	MD_CFG_DUMP_FLAG,
-};
+static inline void ccci_reset_seq_num(struct ccci_modem *md)
+{
+	/* it's redundant to use 2 arrays, but this makes sequence checking easy */
+	memset(md->seq_nums[OUT], 0, sizeof(md->seq_nums[OUT]));
+	memset(md->seq_nums[IN], -1, sizeof(md->seq_nums[IN]));
+}
 
-enum {
-	ALL_CCIF = 0,
-	AP_MD1_CCIF,
-	AP_MD3_CCIF,
-	MD1_MD3_CCIF,
-};
+/* as one channel can only use one hardware queue,
+	so it's safe we call this function in hardware queue's lock protection */
+static inline void ccci_inc_tx_seq_num(struct ccci_modem *md, struct ccci_header *ccci_h)
+{
+#ifdef FEATURE_SEQ_CHECK_EN
+	if (ccci_h->channel >= ARRAY_SIZE(md->seq_nums[OUT]) || ccci_h->channel < 0) {
+		CCCI_NORMAL_LOG(md->index, CORE, "ignore seq inc on channel %x\n", *(((u32 *) ccci_h) + 2));
+		return;		/* for force assert channel, etc. */
+	}
+	ccci_h->seq_num = md->seq_nums[OUT][ccci_h->channel]++;
+	ccci_h->assert_bit = 1;
+
+	/* for rpx channel, can only set assert_bit when md is in single-task phase. */
+	/* when md is in multi-task phase, assert bit should be 0, since ipc task are preemptible */
+	if ((ccci_h->channel == CCCI_RPC_TX || ccci_h->channel == CCCI_FS_TX) && md->boot_stage != MD_BOOT_STAGE_1)
+		ccci_h->assert_bit = 0;
+
+#endif
+}
+
+static inline void ccci_chk_rx_seq_num(struct ccci_modem *md, struct ccci_header *ccci_h, int qno)
+{
+#ifdef FEATURE_SEQ_CHECK_EN
+	u16 channel, seq_num, assert_bit;
+
+	channel = ccci_h->channel;
+	seq_num = ccci_h->seq_num;
+	assert_bit = ccci_h->assert_bit;
+
+	if (assert_bit && md->seq_nums[IN][channel] != 0 && ((seq_num - md->seq_nums[IN][channel]) & 0x7FFF) != 1) {
+		CCCI_ERROR_LOG(md->index, CORE, "channel %d seq number out-of-order %d->%d\n",
+			     channel, seq_num, md->seq_nums[IN][channel]);
+		md->ops->dump_info(md, DUMP_FLAG_CLDMA, NULL, qno);
+		md->ops->force_assert(md, CCIF_INTR_SEQ);
+	} else {
+		/* CCCI_NORMAL_LOG(md->index, CORE, "ch %d seq %d->%d %d\n",
+			channel, md->seq_nums[IN][channel], seq_num, assert_bit); */
+		md->seq_nums[IN][channel] = seq_num;
+	}
+#endif
+}
+
+static inline void ccci_channel_update_packet_counter(struct ccci_modem *md, struct ccci_header *ccci_h)
+{
+	if ((ccci_h->channel & 0xFF) < CCCI_MAX_CH_NUM)
+		md->logic_ch_pkt_cnt[ccci_h->channel]++;
+}
+
+static inline void ccci_channel_dump_packet_counter(struct ccci_modem *md)
+{
+	CCCI_REPEAT_LOG(md->index, CORE, "traffic(ch): tx:[%d]%ld, [%d]%ld, [%d]%ld rx:[%d]%ld, [%d]%ld, [%d]%ld\n",
+		     CCCI_PCM_TX, md->logic_ch_pkt_cnt[CCCI_PCM_TX],
+		     CCCI_UART2_TX, md->logic_ch_pkt_cnt[CCCI_UART2_TX],
+		     CCCI_FS_TX, md->logic_ch_pkt_cnt[CCCI_FS_TX],
+		     CCCI_PCM_RX, md->logic_ch_pkt_cnt[CCCI_PCM_RX],
+		     CCCI_UART2_RX, md->logic_ch_pkt_cnt[CCCI_UART2_RX], CCCI_FS_RX, md->logic_ch_pkt_cnt[CCCI_FS_RX]);
+	CCCI_REPEAT_LOG(md->index, CORE,
+		     "traffic(net): tx: [%d]%ld %ld, [%d]%ld %ld, [%d]%ld %ld, rx:[%d]%ld, [%d]%ld, [%d]%ld\n",
+		     CCCI_CCMNI1_TX, md->logic_ch_pkt_pre_cnt[CCCI_CCMNI1_TX], md->logic_ch_pkt_cnt[CCCI_CCMNI1_TX],
+		     CCCI_CCMNI2_TX, md->logic_ch_pkt_pre_cnt[CCCI_CCMNI2_TX], md->logic_ch_pkt_cnt[CCCI_CCMNI2_TX],
+		     CCCI_CCMNI3_TX, md->logic_ch_pkt_pre_cnt[CCCI_CCMNI3_TX], md->logic_ch_pkt_cnt[CCCI_CCMNI3_TX],
+		     CCCI_CCMNI1_RX, md->logic_ch_pkt_cnt[CCCI_CCMNI1_RX],
+		     CCCI_CCMNI2_RX, md->logic_ch_pkt_cnt[CCCI_CCMNI2_RX],
+		     CCCI_CCMNI3_RX, md->logic_ch_pkt_cnt[CCCI_CCMNI3_RX]);
+}
+
+#define PORT_TXQ_INDEX(p) ((p)->modem->md_state == EXCEPTION?(p)->txq_exp_index:(p)->txq_index)
+#define PORT_RXQ_INDEX(p) ((p)->modem->md_state == EXCEPTION?(p)->rxq_exp_index:(p)->rxq_index)
+
+/*
+ * if send_request returns 0, then it's modem driver's duty to free the request, and caller should NOT reference the
+ * request any more. but if it returns error, calller should be responsible to free the request.
+ */
+static inline int ccci_port_send_request(struct ccci_port *port, struct ccci_request *req)
+{
+	struct ccci_modem *md = port->modem;
+	struct ccci_header *ccci_h = (struct ccci_header *)req->skb->data;
+
+	md->logic_ch_pkt_pre_cnt[ccci_h->channel]++;
+	return md->ops->send_request(md, PORT_TXQ_INDEX(port), req, NULL);
+}
+
+/*
+ * caller should lock with port->rx_req_lock
+ */
+static inline int ccci_port_ask_more_request(struct ccci_port *port)
+{
+	struct ccci_modem *md = port->modem;
+	int ret;
+
+	if (port->flags & PORT_F_RX_FULLED)
+		ret = md->ops->give_more(port->modem, PORT_RXQ_INDEX(port));
+	else
+		ret = -1;
+	return ret;
+}
+
+/* structure initialize */
+static inline void ccci_port_struct_init(struct ccci_port *port, struct ccci_modem *md)
+{
+	INIT_LIST_HEAD(&port->rx_req_list);
+	spin_lock_init(&port->rx_req_lock);
+	INIT_LIST_HEAD(&port->entry);
+	init_waitqueue_head(&port->rx_wq);
+	port->rx_length = 0;
+	port->tx_busy_count = 0;
+	port->rx_busy_count = 0;
+	atomic_set(&port->usage_cnt, 0);
+	port->modem = md;
+	wake_lock_init(&port->rx_wakelock, WAKE_LOCK_SUSPEND, port->name);
+}
+
+/*
+ * only used during allocate buffer pool, should NOT be used after allocated a request
+ */
+static inline void ccci_request_struct_init(struct ccci_request *req)
+{
+	memset(req, 0, sizeof(struct ccci_request));
+	req->state = IDLE;
+	req->policy = FREE;
+	INIT_LIST_HEAD(&req->entry);
+}
 
 #ifdef FEATURE_MD_GET_CLIB_TIME
 extern volatile int current_time_zone;
 #endif
 
+struct ccci_modem *ccci_allocate_modem(int private_size);
+int ccci_register_modem(struct ccci_modem *modem);
 int ccci_register_dev_node(const char *name, int major_id, int minor);
+struct ccci_port *ccci_get_port_for_node(int major, int minor);
+int ccci_send_msg_to_md(struct ccci_modem *md, CCCI_CH ch, CCCI_MD_MSG msg, u32 resv, int blocking);
+int ccci_send_virtual_md_msg(struct ccci_modem *md, CCCI_CH ch, CCCI_MD_MSG msg, u32 resv);
+struct ccci_modem *ccci_get_modem_by_id(int md_id);
+struct ccci_modem *ccci_get_another_modem(int md_id);
 int exec_ccci_kern_func_by_md_id(int md_id, unsigned int id, char *buf, unsigned int len);
+void ccci_dump_log_history(struct ccci_modem *md, int dump_multi_rec, int tx_queue_num, int rx_queue_num);
+void ccci_dump_log_add(struct ccci_modem *md, DIRECTION dir, int queue_index,
+				struct ccci_header *msg, int is_dropped);
 int ccci_scp_ipi_send(int md_id, int op_id, void *data);
-void ccci_sysfs_add_md(int md_id, void *kobj);
-void scp_md_state_sync_work(struct work_struct *work);
+void ccci_update_md_boot_stage(struct ccci_modem *md, MD_BOOT_STAGE stage);
 
 /* common sub-system */
 extern int ccci_subsys_bm_init(void);
 extern int ccci_subsys_sysfs_init(void);
 extern int ccci_subsys_dfo_init(void);
 /* per-modem sub-system */
-extern int switch_MD1_Tx_Power(unsigned int mode);
-extern int switch_MD2_Tx_Power(unsigned int mode);
+extern int ccci_subsys_char_init(struct ccci_modem *md);
 
-#ifdef FEATURE_MTK_SWITCH_TX_POWER
-int swtp_init(int md_id);
-#endif
-
-/* ================================================================================= */
-/* IOCTL defination */
-/* ================================================================================= */
-/* CCCI == EEMCS */
-#define CCCI_IOC_MAGIC 'C'
-#define CCCI_IOC_MD_RESET			_IO(CCCI_IOC_MAGIC, 0) /* mdlogger // META // muxreport */
-#define CCCI_IOC_GET_MD_STATE			_IOR(CCCI_IOC_MAGIC, 1, unsigned int) /* audio */
-#define CCCI_IOC_PCM_BASE_ADDR			_IOR(CCCI_IOC_MAGIC, 2, unsigned int) /* audio */
-#define CCCI_IOC_PCM_LEN			_IOR(CCCI_IOC_MAGIC, 3, unsigned int) /* audio */
-#define CCCI_IOC_FORCE_MD_ASSERT		_IO(CCCI_IOC_MAGIC, 4) /* muxreport // mdlogger */
-#define CCCI_IOC_ALLOC_MD_LOG_MEM		_IO(CCCI_IOC_MAGIC, 5) /* mdlogger */
-#define CCCI_IOC_DO_MD_RST			_IO(CCCI_IOC_MAGIC, 6) /* md_init */
-#define CCCI_IOC_SEND_RUN_TIME_DATA		_IO(CCCI_IOC_MAGIC, 7) /* md_init */
-#define CCCI_IOC_GET_MD_INFO			_IOR(CCCI_IOC_MAGIC, 8, unsigned int) /* md_init */
-#define CCCI_IOC_GET_MD_EX_TYPE			_IOR(CCCI_IOC_MAGIC, 9, unsigned int) /* mdlogger */
-#define CCCI_IOC_SEND_STOP_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 10) /* muxreport */
-#define CCCI_IOC_SEND_START_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 11) /* muxreport */
-#define CCCI_IOC_DO_STOP_MD			_IO(CCCI_IOC_MAGIC, 12) /* md_init */
-#define CCCI_IOC_DO_START_MD			_IO(CCCI_IOC_MAGIC, 13) /* md_init */
-#define CCCI_IOC_ENTER_DEEP_FLIGHT		_IO(CCCI_IOC_MAGIC, 14) /* RILD // factory */
-#define CCCI_IOC_LEAVE_DEEP_FLIGHT		_IO(CCCI_IOC_MAGIC, 15) /* RILD // factory */
-#define CCCI_IOC_POWER_ON_MD			_IO(CCCI_IOC_MAGIC, 16) /* md_init, abandoned */
-#define CCCI_IOC_POWER_OFF_MD			_IO(CCCI_IOC_MAGIC, 17) /* md_init, abandoned */
-#define CCCI_IOC_POWER_ON_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 18) /* md_init, abandoned */
-#define CCCI_IOC_POWER_OFF_MD_REQUEST		_IO(CCCI_IOC_MAGIC, 19) /* md_init, abandoned */
-#define CCCI_IOC_SIM_SWITCH			_IOW(CCCI_IOC_MAGIC, 20, unsigned int) /* RILD // factory */
-#define CCCI_IOC_SEND_BATTERY_INFO		_IO(CCCI_IOC_MAGIC, 21) /* md_init */
-#define CCCI_IOC_SIM_SWITCH_TYPE		_IOR(CCCI_IOC_MAGIC, 22, unsigned int) /* RILD */
-#define CCCI_IOC_STORE_SIM_MODE			_IOW(CCCI_IOC_MAGIC, 23, unsigned int) /* RILD */
-#define CCCI_IOC_GET_SIM_MODE			_IOR(CCCI_IOC_MAGIC, 24, unsigned int) /* RILD */
-#define CCCI_IOC_RELOAD_MD_TYPE			_IO(CCCI_IOC_MAGIC, 25) /* META // md_init // muxreport */
-#define CCCI_IOC_GET_SIM_TYPE			_IOR(CCCI_IOC_MAGIC, 26, unsigned int) /* terservice */
-#define CCCI_IOC_ENABLE_GET_SIM_TYPE		_IOW(CCCI_IOC_MAGIC, 27, unsigned int) /* terservice */
-#define CCCI_IOC_SEND_ICUSB_NOTIFY		_IOW(CCCI_IOC_MAGIC, 28, unsigned int) /* icusbd */
-#define CCCI_IOC_SET_MD_IMG_EXIST		_IOW(CCCI_IOC_MAGIC, 29, unsigned int) /* md_init */
-#define CCCI_IOC_GET_MD_IMG_EXIST		_IOR(CCCI_IOC_MAGIC, 30, unsigned int) /* META */
-#define CCCI_IOC_GET_MD_TYPE			_IOR(CCCI_IOC_MAGIC, 31, unsigned int) /* RILD */
-#define CCCI_IOC_STORE_MD_TYPE			_IOW(CCCI_IOC_MAGIC, 32, unsigned int) /* RILD */
-#define CCCI_IOC_GET_MD_TYPE_SAVING		_IOR(CCCI_IOC_MAGIC, 33, unsigned int) /* META */
-#define CCCI_IOC_GET_EXT_MD_POST_FIX		_IOR(CCCI_IOC_MAGIC, 34, unsigned int) /* mdlogger */
-#define CCCI_IOC_FORCE_FD			_IOW(CCCI_IOC_MAGIC, 35, unsigned int) /* RILD(6577) */
-#define CCCI_IOC_AP_ENG_BUILD			_IOW(CCCI_IOC_MAGIC, 36, unsigned int) /* md_init(6577) */
-#define CCCI_IOC_GET_MD_MEM_SIZE		_IOR(CCCI_IOC_MAGIC, 37, unsigned int) /* md_init(6577) */
-#define CCCI_IOC_UPDATE_SIM_SLOT_CFG		_IOW(CCCI_IOC_MAGIC, 38, unsigned int) /* RILD */
-#define CCCI_IOC_GET_CFG_SETTING		_IOW(CCCI_IOC_MAGIC, 39, unsigned int) /* md_init */
-
-#define CCCI_IOC_SET_MD_SBP_CFG			_IOW(CCCI_IOC_MAGIC, 40, unsigned int) /* md_init */
-#define CCCI_IOC_GET_MD_SBP_CFG			_IOW(CCCI_IOC_MAGIC, 41, unsigned int) /* md_init */
-/* modem protocol type for meta: AP_TST or DHL */
-#define CCCI_IOC_GET_MD_PROTOCOL_TYPE	_IOR(CCCI_IOC_MAGIC, 42, char[16])
-#define CCCI_IOC_SEND_SIGNAL_TO_USER	_IOW(CCCI_IOC_MAGIC, 43, unsigned int) /* md_init */
-#define CCCI_IOC_RESET_MD1_MD3_PCCIF	_IO(CCCI_IOC_MAGIC, 45) /* md_init */
-#define CCCI_IOC_RESET_AP               _IOW(CCCI_IOC_MAGIC, 46, unsigned int)
-
-/*md_init set MD boot env data before power on MD */
-#define CCCI_IOC_SET_BOOT_DATA			_IOW(CCCI_IOC_MAGIC, 47, unsigned int[16])
-
-/* for user space share memory user */
-#define CCCI_IOC_SMEM_BASE			_IOR(CCCI_IOC_MAGIC, 48, unsigned int)
-#define CCCI_IOC_SMEM_LEN			_IOR(CCCI_IOC_MAGIC, 49, unsigned int)
-#define CCCI_IOC_SMEM_TX_NOTIFY			_IOW(CCCI_IOC_MAGIC, 50, unsigned int)
-#define CCCI_IOC_SMEM_RX_POLL			_IOR(CCCI_IOC_MAGIC, 51, unsigned int)
-#define CCCI_IOC_SMEM_SET_STATE			_IOW(CCCI_IOC_MAGIC, 52, unsigned int)
-#define CCCI_IOC_SMEM_GET_STATE			_IOR(CCCI_IOC_MAGIC, 53, unsigned int)
-
-#define CCCI_IOC_SET_CCIF_CG			_IOW(CCCI_IOC_MAGIC, 54, unsigned int) /*md_init*/
-#define CCCI_IOC_SET_EFUN               _IOW(CCCI_IOC_MAGIC, 55, unsigned int) /* RILD */
-#define CCCI_IOC_MDLOG_DUMP_DONE		_IO(CCCI_IOC_MAGIC, 56) /*mdlogger*/
-#define CCCI_IOC_GET_OTHER_MD_STATE		_IOR(CCCI_IOC_MAGIC, 57, unsigned int) /* mdlogger */
-#define CCCI_IOC_SET_MD_BOOT_MODE       _IOW(CCCI_IOC_MAGIC, 58, unsigned int) /* META */
-#define CCCI_IOC_GET_MD_BOOT_MODE       _IOR(CCCI_IOC_MAGIC, 59, unsigned int) /* md_init */
-
-#define CCCI_IOC_GET_AT_CH_NUM			_IOR(CCCI_IOC_MAGIC, 60, unsigned int) /* RILD */
-#define CCCI_IOC_ENTER_UPLOAD		_IO(CCCI_IOC_MAGIC, 61) /* modem log for S */
-#define CCCI_IOC_GET_RAT_STR			_IOR(CCCI_IOC_MAGIC, 62, unsigned int[16])
-#define CCCI_IOC_SET_RAT_STR			_IOW(CCCI_IOC_MAGIC, 63, unsigned int[16])
-
-#define CCCI_IOC_SET_HEADER				_IO(CCCI_IOC_MAGIC,  112) /* emcs_va */
-#define CCCI_IOC_CLR_HEADER				_IO(CCCI_IOC_MAGIC,  113) /* emcs_va */
-#define CCCI_IOC_DL_TRAFFIC_CONTROL		_IOW(CCCI_IOC_MAGIC, 119, unsigned int) /* mdlogger */
-
-#define CCCI_IOC_ENTER_DEEP_FLIGHT_ENHANCED     _IO(CCCI_IOC_MAGIC,  123) /* RILD  factory */
-#define CCCI_IOC_LEAVE_DEEP_FLIGHT_ENHANCED     _IO(CCCI_IOC_MAGIC,  124) /* RILD  factory */
-
-
-#define CCCI_IPC_MAGIC 'P' /* only for IPC user */
-/* CCCI == EEMCS */
-#define CCCI_IPC_RESET_RECV			_IO(CCCI_IPC_MAGIC, 0)
-#define CCCI_IPC_RESET_SEND			_IO(CCCI_IPC_MAGIC, 1)
-#define CCCI_IPC_WAIT_MD_READY			_IO(CCCI_IPC_MAGIC, 2)
-#define CCCI_IPC_KERN_WRITE_TEST		_IO(CCCI_IPC_MAGIC, 3)
-#define CCCI_IPC_UPDATE_TIME			_IO(CCCI_IPC_MAGIC, 4)
-#define CCCI_IPC_WAIT_TIME_UPDATE		_IO(CCCI_IPC_MAGIC, 5)
-#define CCCI_IPC_UPDATE_TIMEZONE		_IO(CCCI_IPC_MAGIC, 6)
-
-/* ================================================================================= */
-/* CCCI Channel ID and Message defination */
-/* ================================================================================= */
-typedef enum {
-	CCCI_CONTROL_RX = 0,
-	CCCI_CONTROL_TX = 1,
-	CCCI_SYSTEM_RX = 2,
-	CCCI_SYSTEM_TX = 3,
-	CCCI_PCM_RX = 4,
-	CCCI_PCM_TX = 5,
-	CCCI_UART1_RX = 6, /* META */
-	CCCI_UART1_RX_ACK = 7,
-	CCCI_UART1_TX = 8,
-	CCCI_UART1_TX_ACK = 9,
-	CCCI_UART2_RX = 10, /* MUX */
-	CCCI_UART2_RX_ACK = 11,
-	CCCI_UART2_TX = 12,
-	CCCI_UART2_TX_ACK = 13,
-	CCCI_FS_RX = 14,
-	CCCI_FS_TX = 15,
-	CCCI_PMIC_RX = 16,
-	CCCI_PMIC_TX = 17,
-	CCCI_UEM_RX = 18,
-	CCCI_UEM_TX = 19,
-	CCCI_CCMNI1_RX = 20,
-	CCCI_CCMNI1_RX_ACK = 21,
-	CCCI_CCMNI1_TX = 22,
-	CCCI_CCMNI1_TX_ACK = 23,
-	CCCI_CCMNI2_RX = 24,
-	CCCI_CCMNI2_RX_ACK = 25,
-	CCCI_CCMNI2_TX = 26,
-	CCCI_CCMNI2_TX_ACK = 27,
-	CCCI_CCMNI3_RX = 28,
-	CCCI_CCMNI3_RX_ACK = 29,
-	CCCI_CCMNI3_TX = 30,
-	CCCI_CCMNI3_TX_ACK = 31,
-	CCCI_RPC_RX = 32,
-	CCCI_RPC_TX = 33,
-	CCCI_IPC_RX = 34,
-	CCCI_IPC_RX_ACK = 35,
-	CCCI_IPC_TX = 36,
-	CCCI_IPC_TX_ACK = 37,
-	CCCI_IPC_UART_RX = 38,
-	CCCI_IPC_UART_RX_ACK = 39,
-	CCCI_IPC_UART_TX = 40,
-	CCCI_IPC_UART_TX_ACK = 41,
-	CCCI_MD_LOG_RX = 42,
-	CCCI_MD_LOG_TX = 43,
-	/* ch44~49 reserved for ARM7 */
-	CCCI_IT_RX = 50,
-	CCCI_IT_TX = 51,
-	CCCI_IMSV_UL = 52,
-	CCCI_IMSV_DL = 53,
-	CCCI_IMSC_UL = 54,
-	CCCI_IMSC_DL = 55,
-	CCCI_IMSA_UL = 56,
-	CCCI_IMSA_DL = 57,
-	CCCI_IMSDC_UL = 58,
-	CCCI_IMSDC_DL = 59,
-	CCCI_ICUSB_RX = 60,
-	CCCI_ICUSB_TX = 61,
-	CCCI_LB_IT_RX = 62,
-	CCCI_LB_IT_TX = 63,
-	CCCI_CCMNI1_DL_ACK = 64,
-	CCCI_CCMNI2_DL_ACK = 65,
-	CCCI_CCMNI3_DL_ACK = 66,
-	CCCI_STATUS_RX = 67,
-	CCCI_STATUS_TX = 68,
-	CCCI_CCMNI4_RX                  = 69,
-	CCCI_CCMNI4_RX_ACK              = 70,
-	CCCI_CCMNI4_TX                  = 71,
-	CCCI_CCMNI4_TX_ACK              = 72,
-	CCCI_CCMNI4_DLACK_RX            = 73,
-	CCCI_CCMNI5_RX                  = 74,
-	CCCI_CCMNI5_RX_ACK              = 75,
-	CCCI_CCMNI5_TX                  = 76,
-	CCCI_CCMNI5_TX_ACK              = 77,
-	CCCI_CCMNI5_DLACK_RX            = 78,
-	CCCI_CCMNI6_RX                  = 79,
-	CCCI_CCMNI6_RX_ACK              = 80,
-	CCCI_CCMNI6_TX                  = 81,
-	CCCI_CCMNI6_TX_ACK              = 82,
-	CCCI_CCMNI6_DLACK_RX            = 83,
-	CCCI_CCMNI7_RX                  = 84,
-	CCCI_CCMNI7_RX_ACK              = 85,
-	CCCI_CCMNI7_TX                  = 86,
-	CCCI_CCMNI7_TX_ACK              = 87,
-	CCCI_CCMNI7_DLACK_RX            = 88,
-	CCCI_CCMNI8_RX                  = 89,
-	CCCI_CCMNI8_RX_ACK              = 90,
-	CCCI_CCMNI8_TX                  = 91,
-	CCCI_CCMNI8_TX_ACK              = 92,
-	CCCI_CCMNI8_DLACK_RX            = 93,
-	CCCI_MDL_MONITOR_DL             = 94,
-	CCCI_MDL_MONITOR_UL             = 95,
-	CCCI_CCMNILAN_RX                = 96,
-	CCCI_CCMNILAN_RX_ACK            = 97,
-	CCCI_CCMNILAN_TX                = 98,
-	CCCI_CCMNILAN_TX_ACK            = 99,
-	CCCI_CCMNILAN_DLACK_RX          = 100,
-	CCCI_IMSEM_UL                   = 101,
-	CCCI_IMSEM_DL                   = 102,
-	CCCI_CCMNI10_RX                 = 103,
-	CCCI_CCMNI10_RX_ACK             = 104,
-	CCCI_CCMNI10_TX                 = 105,
-	CCCI_CCMNI10_TX_ACK             = 106,
-	CCCI_CCMNI10_DLACK_RX           = 107,
-	CCCI_CCMNI11_RX                 = 108,
-	CCCI_CCMNI11_RX_ACK             = 109,
-	CCCI_CCMNI11_TX                 = 110,
-	CCCI_CCMNI11_TX_ACK             = 111,
-	CCCI_CCMNI11_DLACK_RX           = 112,
-	CCCI_CCMNI12_RX                 = 113,
-	CCCI_CCMNI12_RX_ACK             = 114,
-	CCCI_CCMNI12_TX                 = 115,
-	CCCI_CCMNI12_TX_ACK             = 116,
-	CCCI_CCMNI12_DLACK_RX           = 117,
-	CCCI_CCMNI13_RX                 = 118,
-	CCCI_CCMNI13_RX_ACK             = 119,
-	CCCI_CCMNI13_TX                 = 120,
-	CCCI_CCMNI13_TX_ACK             = 121,
-	CCCI_CCMNI13_DLACK_RX           = 122,
-	CCCI_CCMNI14_RX                 = 123,
-	CCCI_CCMNI14_RX_ACK             = 124,
-	CCCI_CCMNI14_TX                 = 125,
-	CCCI_CCMNI14_TX_ACK             = 126,
-	CCCI_CCMNI14_DLACK_RX           = 127,
-	CCCI_CCMNI15_RX                 = 128,
-	CCCI_CCMNI15_RX_ACK             = 129,
-	CCCI_CCMNI15_TX                 = 130,
-	CCCI_CCMNI15_TX_ACK             = 131,
-	CCCI_CCMNI15_DLACK_RX           = 132,
-	CCCI_CCMNI16_RX                 = 133,
-	CCCI_CCMNI16_RX_ACK             = 134,
-	CCCI_CCMNI16_TX                 = 135,
-	CCCI_CCMNI16_TX_ACK             = 136,
-	CCCI_CCMNI16_DLACK_RX           = 137,
-	CCCI_CCMNI17_RX                 = 138,
-	CCCI_CCMNI17_RX_ACK             = 139,
-	CCCI_CCMNI17_TX                 = 140,
-	CCCI_CCMNI17_TX_ACK             = 141,
-	CCCI_CCMNI17_DLACK_RX           = 142,
-	CCCI_CCMNI18_RX                 = 143,
-	CCCI_CCMNI18_RX_ACK             = 144,
-	CCCI_CCMNI18_TX                 = 145,
-	CCCI_CCMNI18_TX_ACK             = 146,
-	CCCI_CCMNI18_DLACK_RX           = 147,
-
-	/*5 chs for C2K only*/
-	CCCI_C2K_PPP_DATA,		/* data ch for c2k */
-	CCCI_C2K_AT,	/*rild AT ch for c2k*/
-	CCCI_C2K_AT2,	/*rild AT2 ch for c2k*/
-	CCCI_C2K_AT3,	/*rild AT3 ch for c2k*/
-	CCCI_C2K_AT4,	/*rild AT4 ch for c2k*/
-	CCCI_C2K_AT5,	/*rild AT5 ch for c2k*/
-	CCCI_C2K_AT6,	/*rild AT6 ch for c2k*/
-	CCCI_C2K_AT7,	/*rild AT7 ch for c2k*/
-	CCCI_C2K_AT8,	/*rild AT8 ch for c2k*/
-	CCCI_C2K_LB_DL,	/*downlink loopback*/
-
-	/* virtual channels */
-	CCCI_MONITOR_CH,
-	CCCI_DUMMY_CH,
-	CCCI_SMEM_CH,
-	CCCI_MAX_CH_NUM, /* RX channel ID should NOT be >= this!! */
-	CCCI_OVER_MAX_CH,
-
-	CCCI_MONITOR_CH_ID = 0xf0000000, /* for backward compatible */
-	CCCI_FORCE_ASSERT_CH = 20090215,
-	CCCI_INVALID_CH_ID = 0xffffffff,
-} CCCI_CH;
-
-enum c2k_channel {
-	CTRL_CH_C2K = 0,
-	AUDIO_CH_C2K = 1,
-	DATA_PPP_CH_C2K = 2,
-	MDLOG_CTRL_CH_C2K = 3,
-	FS_CH_C2K = 4,
-	AT_CH_C2K = 5,
-	AGPS_CH_C2K = 6,
-	AT2_CH_C2K = 7,
-	AT3_CH_C2K = 8,
-	MDLOG_CH_C2K = 9,
-	AT4_CH_C2K = 10,
-	STATUS_CH_C2K = 11,
-	NET1_CH_C2K = 12,
-	NET2_CH_C2K = 13,	/*need sync with c2k */
-	NET3_CH_C2K = 14,	/*need sync with c2k */
-	NET4_CH_C2K = 15,
-	NET5_CH_C2K = 16,
-	NET6_CH_C2K = 17,	/*need sync with c2k */
-	NET7_CH_C2K = 18,
-	NET8_CH_C2K = 19,
-	AT5_CH_C2K = 20,
-	AT6_CH_C2K = 21,
-	AT7_CH_C2K = 22,
-	AT8_CH_C2K = 23,
-
-	C2K_MAX_CH_NUM,
-	C2K_OVER_MAX_CH,
-
-	LOOPBACK_C2K = 255,
-	MD2AP_LOOPBACK_C2K = 256,
-};
-
-/* AP->md_init messages on monitor channel */
-typedef enum {
-	CCCI_MD_MSG_FORCE_STOP_REQUEST = 0xFAF50001,
-	CCCI_MD_MSG_FLIGHT_STOP_REQUEST,
-	CCCI_MD_MSG_FORCE_START_REQUEST,
-	CCCI_MD_MSG_FLIGHT_START_REQUEST,
-	CCCI_MD_MSG_RESET_REQUEST,
-
-	CCCI_MD_MSG_EXCEPTION,
-	CCCI_MD_MSG_SEND_BATTERY_INFO,
-	CCCI_MD_MSG_STORE_NVRAM_MD_TYPE,
-	CCCI_MD_MSG_CFG_UPDATE,
-	CCCI_MD_MSG_RANDOM_PATTERN,
-} CCCI_MD_MSG;
-
-/* AP<->MD messages on control or system channel */
-enum {
-	/* Control channel, MD->AP */
-	MD_INIT_START_BOOT = 0x0,
-	MD_NORMAL_BOOT = 0x0,
-	MD_NORMAL_BOOT_READY = 0x1, /* not using */
-	MD_META_BOOT_READY = 0x2, /* not using */
-	MD_RESET = 0x3, /* not using */
-	MD_EX = 0x4,
-	CCCI_DRV_VER_ERROR = 0x5,
-	MD_EX_REC_OK = 0x6,
-	MD_EX_RESUME = 0x7, /* not using */
-	MD_EX_PASS = 0x8,
-	MD_INIT_CHK_ID = 0x5555FFFF,
-	MD_EX_CHK_ID = 0x45584350,
-	MD_EX_REC_OK_CHK_ID = 0x45524543,
-
-	/* System channel, AP->MD || AP<-->MD message start from 0x100 */
-	MD_DORMANT_NOTIFY = 0x100,
-	MD_SLP_REQUEST = 0x101,
-	MD_TX_POWER = 0x102,
-	MD_RF_TEMPERATURE = 0x103,
-	MD_RF_TEMPERATURE_3G = 0x104,
-	MD_GET_BATTERY_INFO = 0x105,
-
-	MD_SIM_TYPE = 0x107,
-	MD_ICUSB_NOTIFY = 0x108,
-	/* 0x109 for md legacy use to crystal_thermal_change */
-	MD_LOW_BATTERY_LEVEL = 0x10A,
-	/* 0x10B-0x10C occupied by EEMCS */
-	MD_PAUSE_LTE = 0x10D,
-	MD_RESET_AP = 0x118,
-	/* swtp */
-	MD_SW_MD1_TX_POWER = 0x10E,
-	MD_SW_MD2_TX_POWER = 0x10F,
-	MD_SW_MD1_TX_POWER_REQ = 0x110,
-	MD_SW_MD2_TX_POWER_REQ = 0x111,
-	MD_THROTTLING = 0x112, /* SW throughput throttling */
-	/* TEST_MESSAGE for IT only */
-	TEST_MSG_ID_MD2AP = 0x114,
-	TEST_MSG_ID_AP2MD = 0x115,
-	TEST_MSG_ID_L1CORE_MD2AP = 0x116,
-	TEST_MSG_ID_L1CORE_AP2MD = 0x117,
-
-	CCISM_SHM_INIT = 0x119,
-	CCISM_SHM_INIT_ACK = 0x11A,
-	CCISM_SHM_INIT_DONE = 0x11B,
-	PMIC_INTR_MODEM_BUCK_OC = 0x11C,
-	MD_AP_MPU_ACK_MD = 0x11D,
-
-	/*c2k ctrl msg start from 0x200*/
-	C2K_STATUS_IND_MSG = 0x201, /* for usb bypass */
-	C2K_STATUS_QUERY_MSG = 0x202, /* for usb bypass */
-	C2K_FLOW_CTRL_MSG = 0x205,
-	C2K_HB_MSG = 0x207,
-	C2K_CCISM_SHM_INIT = 0x209,
-	C2K_CCISM_SHM_INIT_ACK = 0x20A,
-	C2K_CCISM_SHM_INIT_DONE = 0x20B,
-
-	/* System channel, MD->AP message start from 0x1000 */
-	MD_WDT_MONITOR = 0x1000,
-	/* System channel, AP->MD message */
-	MD_WAKEN_UP = 0x10000,
-};
-
-#define NORMAL_BOOT_ID 0
-#define META_BOOT_ID 1
-#define FACTORY_BOOT_ID	2
-
-struct ccci_dev_cfg {
-	unsigned int index;
-	unsigned int major;
-	unsigned int minor_base;
-	unsigned int capability;
-};
-
-/* Rutime data common part */
-typedef enum {
-	FEATURE_NOT_EXIST = 0,
-	FEATURE_NOT_SUPPORT,
-	FEATURE_SUPPORT,
-	FEATURE_PARTIALLY_SUPPORT,
-} MISC_FEATURE_STATE;
-
-typedef enum {
-	MISC_DMA_ADDR = 0,
-	MISC_32K_LESS,
-	MISC_RAND_SEED,
-	MISC_MD_COCLK_SETTING,
-	MISC_MD_SBP_SETTING,
-	MISC_MD_SEQ_CHECK,
-	MISC_MD_CLIB_TIME,
-	MISC_MD_C2K_ON,
-} MISC_FEATURE_ID;
-
-typedef enum {
-	MODE_UNKNOWN = -1,	  /* -1 */
-	MODE_IDLE,			  /* 0 */
-	MODE_USB,			   /* 1 */
-	MODE_SD,				/* 2 */
-	MODE_POLLING,		   /* 3 */
-	MODE_WAITSD,			/* 4 */
-} LOGGING_MODE;
-
-typedef enum {
-	HIF_EX_INIT = 0, /* interrupt */
-	HIF_EX_ACK, /* AP->MD */
-	HIF_EX_INIT_DONE, /* polling */
-	HIF_EX_CLEARQ_DONE, /* interrupt */
-	HIF_EX_CLEARQ_ACK, /* AP->MD */
-	HIF_EX_ALLQ_RESET, /* polling */
-} HIF_EX_STAGE;
-
-enum {
-	P_CORE = 0,
-	VOLTE_CORE,
-};
-
-/* runtime data format uses EEMCS's version, NOT the same with legacy CCCI */
-struct modem_runtime {
-	u32 Prefix;			 /* "CCIF" */
-	u32 Platform_L;		 /* Hardware Platform String ex: "TK6516E0" */
-	u32 Platform_H;
-	u32 DriverVersion;	  /* 0x00000923 since W09.23 */
-	u32 BootChannel;		/* Channel to ACK AP with boot ready */
-	u32 BootingStartID;	 /* MD is booting. NORMAL_BOOT_ID or META_BOOT_ID */
-#if 1 /* not using in EEMCS */
-	u32 BootAttributes;	 /* Attributes passing from AP to MD Booting */
-	u32 BootReadyID;		/* MD response ID if boot successful and ready */
-	u32 FileShareMemBase;
-	u32 FileShareMemSize;
-	u32 ExceShareMemBase;
-	u32 ExceShareMemSize;
-	u32 CCIFShareMemBase;
-	u32 CCIFShareMemSize;
-#ifdef FEATURE_SMART_LOGGING
-	u32 DHLShareMemBase; /* For DHL */
-	u32 DHLShareMemSize;
-#endif
-#ifdef FEATURE_MD1MD3_SHARE_MEM
-	u32 MD1MD3ShareMemBase; /* For MD1 MD3 share memory */
-	u32 MD1MD3ShareMemSize;
-#endif
-	u32 TotalShareMemBase;
-	u32 TotalShareMemSize;
-	u32 CheckSum;
-#endif
-	u32 Postfix; /* "CCIF" */
-#if 1 /* misc region */
-	u32 misc_prefix;	/* "MISC" */
-	u32 support_mask;
-	u32 index;
-	u32 next;
-	u32 feature_0_val[4];
-	u32 feature_1_val[4];
-	u32 feature_2_val[4];
-	u32 feature_3_val[4];
-	u32 feature_4_val[4];
-	u32 feature_5_val[4];
-	u32 feature_6_val[4];
-	u32 feature_7_val[4];
-	u32 feature_8_val[4];
-	u32 feature_9_val[4];
-	u32 feature_10_val[4];
-	u32 feature_11_val[4];
-	u32 feature_12_val[4];
-	u32 feature_13_val[4];
-	u32 feature_14_val[4];
-	u32 feature_15_val[4];
-	u32 reserved_2[3];
-	u32 misc_postfix;	/* "MISC" */
-#endif
-} __packed;
-
-/* do not modify this c2k structure, because we assume its total size is 32bit,
- * and used as ccci_header's 'reserved' member
+extern void set_ccif_cg(unsigned int on);
+extern void md_ex_monitor_func(unsigned long data);
+extern void md_ex_monitor2_func(unsigned long data);
+extern void md_bootup_timeout_func(unsigned long data);
+extern void md_status_poller_func(unsigned long data);
+extern void md_status_timeout_func(unsigned long data);
+extern void ccci_subsys_kernel_init(void);
+extern int ccci_set_md_boot_data(struct ccci_modem *md, unsigned int data[], int len);
+extern int md_smem_port_cfg(struct ccci_modem *md);
+/*
+ * if recv_request returns 0 or -CCCI_ERR_DROP_PACKET, then it's port's duty to free the request, and caller should
+ * NOT reference the request any more. but if it returns other error, caller should be responsible to free the request.
  */
-struct c2k_ctrl_port_msg {
-	unsigned char id_hi;
-	unsigned char id_low;
-	unsigned char chan_num;
-	unsigned char option;
-} __packed; /* not necessary, but it's a good gesture, :) */
+extern int ccci_port_recv_request(struct ccci_modem *md, struct ccci_request *req, struct sk_buff *skb);
 
 #endif	/* __CCCI_CORE_H__ */

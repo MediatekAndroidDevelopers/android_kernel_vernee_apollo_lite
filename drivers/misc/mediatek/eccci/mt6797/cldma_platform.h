@@ -149,7 +149,6 @@
 #define H2D_EXCEPTION_ACK (1)
 #define H2D_EXCEPTION_CLEARQ_ACK (2)
 #define H2D_FORCE_MD_ASSERT (3)
-#define H2D_MPU_FORCE_ASSERT (4)
 /* MD to AP */
 #define D2H_EXCEPTION_INIT (1)
 #define D2H_EXCEPTION_INIT_DONE (2)
@@ -198,6 +197,8 @@ struct md_pll_reg {
 	void __iomem *md_clk_ctl13;
 	void __iomem *md_clk_ctl14;
 	void __iomem *md_clk_ctl15;
+	void __iomem *md_boot_stats0;
+	void __iomem *md_boot_stats1;
 };
 #define MD_BUSREG_DUMP_ADDR1   0x20060000
 #define MD_BUSREG_DUMP_LEN1    (0xF8)
@@ -289,7 +290,7 @@ int ccci_modem_pm_suspend(struct device *device);
 int ccci_modem_pm_resume(struct device *device);
 int ccci_modem_pm_restore_noirq(struct device *device);
 int md_cd_power_on(struct ccci_modem *md);
-int md_cd_power_off(struct ccci_modem *md, unsigned int stop_type);
+int md_cd_power_off(struct ccci_modem *md, unsigned int timeout);
 int md_cd_soft_power_off(struct ccci_modem *md, unsigned int mode);
 int md_cd_soft_power_on(struct ccci_modem *md, unsigned int mode);
 int md_cd_let_md_go(struct ccci_modem *md);
@@ -304,6 +305,7 @@ void md_cd_dump_md_bootup_status(struct ccci_modem *md);
 void md_cd_check_emi_state(struct ccci_modem *md, int polling);
 void cldma_dump_register(struct ccci_modem *md);
 void md_cldma_hw_reset(struct ccci_modem *md);
+
 /* ADD_SYS_CORE */
 int ccci_modem_syssuspend(void);
 void ccci_modem_sysresume(void);

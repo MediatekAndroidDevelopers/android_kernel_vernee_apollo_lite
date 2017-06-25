@@ -17,7 +17,6 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include "ccci_ringbuf.h"
-#include "ccci_core.h"
 #include "ccci_debug.h"
 
 #define TAG "rbf"
@@ -85,7 +84,7 @@ static inline void *rbf_memcpy(void *__dest, __const void *__src, size_t __n)
 					(unsigned char *)data_addr, data_size);\
 		} else {\
 			rbf_memcpy((unsigned char *)(bufaddr) + write_pos,\
-					(unsigned char *)data_addr,  buflen - write_pos);\
+					(unsigned char *)data_addr ,  buflen - write_pos);\
 			data_addr = (unsigned char *)data_addr + buflen - write_pos;\
 			rbf_memcpy((unsigned char *)(bufaddr), (unsigned char *)data_addr,\
 					data_size - (buflen - write_pos));\
@@ -194,12 +193,10 @@ int ccci_ringbuf_writeable(int md_id, struct ccci_ringbuf *ringbuf, unsigned int
 	} else {
 		size = read - write - 1;
 	}
-#if 0
-	if (write_size > size) {
-		CCCI_NORMAL_LOG(-1, TAG, "rbwb:rbf=%p write_size(%d)>size(%d) r=%d,w=%d\n",
-			ringbuf, write_size, size, read, write);
-	}
-#endif
+	/* if (write_size > size) {
+	   CCCI_NORMAL_LOG(-1, TAG, "rbwb:rbf=%p write_size(%d)>size(%d) r=%d,w=%d\n",
+	   ringbuf,write_size,size,read,write);
+	   } */
 	return (write_size < size) ? write_size : -(write_size - size);
 }
 
@@ -329,10 +326,6 @@ void ccci_ringbuf_move_rpointer(int md_id, struct ccci_ringbuf *ringbuf, int rea
 {
 	unsigned int read, length;
 
-	if (ringbuf->rx_control.read == 0 && ringbuf->rx_control.write == 0) {
-		CCCI_ERROR_LOG(md_id, TAG, "move_rpointer, rbf=%p has been reset\n", ringbuf);
-		return;
-	}
 	read = (unsigned int)(ringbuf->rx_control.read);
 	length = (unsigned int)(ringbuf->rx_control.length);
 	/* Update read pointer */

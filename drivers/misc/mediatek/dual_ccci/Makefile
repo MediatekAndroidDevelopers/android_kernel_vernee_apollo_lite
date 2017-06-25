@@ -11,6 +11,7 @@
 # GNU General Public License for more details.
 #
 
+# include $(srctree)/drivers/misc/mediatek/Makefile.custom
 #CONFIG_MTK_CCCI_DRIVER :=m
 ifeq ($(CONFIG_MTK_CCCI_EXT), y)
 
@@ -38,7 +39,6 @@ ccci-y +=ccmni.o
 ccci-y +=ccmni_pfp.o
 ccci-y +=ccci_mk_node.o
 ccci-y +=ccci_statistics.o
-ccci-y +=ccci_misc.o
 
 #include $(CCCI_DRIVER_DIR)/Makefile
 

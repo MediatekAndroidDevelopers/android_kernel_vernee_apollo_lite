@@ -18,12 +18,10 @@
 #include <linux/wait.h>
 #include <linux/module.h>
 #include <linux/poll.h>
-#include <linux/skbuff.h>
 
-bool __weak spm_is_md1_sleep(void)
+void __weak spm_is_md1_sleep(void)
 {
 	pr_err("[ccci/dummy] %s is not supported!\n", __func__);
-	return 0;
 }
 
 void __weak spm_ap_mdsrc_req(u8 lock)
@@ -71,6 +69,11 @@ unsigned int __weak mt_irq_get_pending(unsigned int irq)
 	return 0;
 }
 
+void __weak notify_time_update(void)
+{
+	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
+}
+
 unsigned long __weak ccci_get_md_boot_count(int md_id)
 {
 	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
@@ -97,15 +100,8 @@ void __weak clk_buf_save_afc_val(unsigned int afcdac)
 {
 	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
 }
-int __weak rawbulk_push_upstream_buffer(int transfer_id, const void *buffer,
-		unsigned int length)
-{
-	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
-	return 0;
-}
-int __weak mbim_start_xmit(struct sk_buff *skb, int ifid)
-{
-	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
-	return 0;
-}
 
+void __weak set_ccif_cg(unsigned int on)
+{
+	pr_debug("[ccci/dummy] %s is not supported!\n", __func__);
+}

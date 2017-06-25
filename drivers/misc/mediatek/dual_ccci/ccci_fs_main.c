@@ -250,25 +250,18 @@ static long ccci_fs_ioctl(struct file *file, unsigned int cmd,
 {
 	int ret;
 	int md_id;
-	int md_stage;
 	struct fs_ctl_block_t *ctl_b;
 
 	ctl_b = (struct fs_ctl_block_t *) file->private_data;
 	md_id = ctl_b->fs_md_id;
-	md_stage = get_curr_md_state(md_id);
+
 	switch (cmd) {
 	case CCCI_FS_IOCTL_GET_INDEX:
 		ret = ccci_fs_get_index(md_id);
-		/*Check FS still under working, no need time out, so resched bootup timer*/
-		if (ret >= 0 && md_stage != MD_BOOT_STAGE_2)
-			ccci_stop_bootup_timer(md_id);
 		break;
 
 	case CCCI_FS_IOCTL_SEND:
 		ret = ccci_fs_send(md_id, arg);
-		/*Check FS still under working, no need time out, so resched bootup timer*/
-		if (ret == 0 && md_stage == MD_BOOT_STAGE_1)
-			ccci_start_bootup_timer(md_id, BOOT_TIMER_HS2);
 		break;
 
 	default:
@@ -325,6 +318,7 @@ static int ccci_fs_release(struct inode *inode, struct file *file)
 	int md_id;
 	int major;
 	struct fs_ctl_block_t *ctl_b;
+	/*  unsigned long   flag; */
 
 	major = imajor(inode);
 	md_id = get_md_id_by_dev_major(major);
@@ -338,9 +332,13 @@ static int ccci_fs_release(struct inode *inode, struct file *file)
 
 	memset(ctl_b->fs_buffers, 0, ctl_b->fs_smem_size);
 	ccci_user_ready_to_reset(md_id, ctl_b->reset_handle);
-	/*boot up timer maybe not stop*/
-	CCCI_MSG_INF(md_id, "fs ", "Try to stop bootup time %s\n", current->comm);
-	ccci_stop_bootup_timer(md_id);
+
+	/*  CR: 1260702 */
+	/*  clear kfifo invalid data which may not be processed before close operation */
+	/*  spin_lock_irqsave(&ctl_b->fs_spinlock,flag); */
+	/*  kfifo_reset(&ctl_b->fs_fifo); */
+	/*  spin_unlock_irqrestore(&ctl_b->fs_spinlock,flag); */
+
 	return 0;
 }
 

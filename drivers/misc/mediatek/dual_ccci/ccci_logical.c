@@ -161,18 +161,18 @@ int get_md_wakeup_src(int md_id, char *buf, unsigned int len)
 				channel_name =
 				    logic_ch_static_info_tab[rx_ch[i]
 							     [0]].m_ch_name;
-				snprintf(str, sizeof(str), "%s(%d,%d) ", channel_name,
+				sprintf(str, "%s(%d,%d) ", channel_name,
 					rx_ch[i][0], rx_ch[i][1]);
 			} else
-				snprintf(str, sizeof(str), "%s(%d,%d) ", "unknown",
+				sprintf(str, "%s(%d,%d) ", "unknown",
 					rx_ch[i][0], rx_ch[i][1]);
-			if (curr_str_len + strlen(str) < sizeof(log_buf) - 1) {
-				strncat(log_buf, str, strlen(str));
-				curr_str_len += strlen(str);
-			}
+
+			curr_str_len += strlen(str);
+			if (curr_str_len < 255)
+				strcat(log_buf, str);
 		}
 	}
-	if (curr_str_len > sizeof(log_buf)) {
+	if (curr_str_len > 255) {
 		CCCI_MSG
 		    ("[ccci/ctl] wakeup source buffer not enough(req:%d>255) for MD%d\n",
 		     curr_str_len, md_id + 1);
@@ -724,9 +724,8 @@ int ccci_logic_ctlb_init(int md_id)
 	if ((sizeof(logic_ch_static_info_tab) /
 	     sizeof(struct logic_channel_static_info_t)) != CCCI_MAX_CH_NUM) {
 		CCCI_MSG_INF(md_id, "cci",
-			     "%s: channel max number mis-match fail, %d:%d\n",
-			     __func__, sizeof(logic_ch_static_info_tab)/sizeof(struct logic_channel_static_info_t),
-			     CCCI_MAX_CH_NUM);
+			     "%s: channel max number mis-match fail\n",
+			     __func__);
 		return -CCCI_ERR_CHANNEL_NUM_MIS_MATCH;
 	}
 

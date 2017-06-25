@@ -12,6 +12,7 @@
 #
 
 ifeq ($(CONFIG_MTK_NET_CCMNI), y)
+# include $(srctree)/drivers/misc/mediatek/Makefile.custom
 
 obj-y := eccmni.o
 

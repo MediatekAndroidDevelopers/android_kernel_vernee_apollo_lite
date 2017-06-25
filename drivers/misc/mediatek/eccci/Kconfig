@@ -1,5 +1,5 @@
 config MTK_ECCCI_DRIVER
-	tristate "Enable Evolved CCCI Driver as interface for modem"
+	tristate "ECCCI Driver"
 	depends on MTK_CCCI_DEVICES
 	default n
 	select MTK_NET_CCMNI
@@ -10,7 +10,7 @@ config MTK_ECCCI_DRIVER
 	  The option default disabled.
 
 config MTK_ECCCI_CLDMA
-	tristate "ECCCI driver using CLDMA HW to communicate wtih LTE modem"
+	tristate "ECCCI CLDMA driver"
 	depends on MTK_ECCCI_DRIVER
 	default y
 	help
@@ -20,7 +20,7 @@ config MTK_ECCCI_CLDMA
 	  The option default disabled.
 
 config MTK_ECCCI_CCIF
-	tristate "ECCCI driver using CCIF HW to communicate wtih LTE modem"
+	tristate "ECCCI CCIF driver"
 	depends on MTK_ECCCI_DRIVER
 	default n
 	help
@@ -30,7 +30,7 @@ config MTK_ECCCI_CCIF
 	  The option default disabled.
 
 config MTK_ECCCI_C2K
-	tristate "ECCCI driver using CCIF HW to communicate wtih C2K modem"
+	tristate "ECCCI CCIF C2K driver"
 	depends on MTK_ECCCI_DRIVER
 	default n
 	help
@@ -40,7 +40,7 @@ config MTK_ECCCI_C2K
 	  The option default disabled.
 
 config MTK_ECCCI_UT
-	tristate "Enable ECCCI UT mode to test"
+	tristate "ECCCI UT mode"
 	depends on MTK_ECCCI_DRIVER
 	default n
 	help
@@ -48,6 +48,57 @@ config MTK_ECCCI_UT
 	  (software loopback, no CLDMA support),
 	  The option depends on MTK_ECCCI_DRIVER,
 	  and default is disabled.
+
+
+config MTK_C2K_SUPPORT
+	bool "MTK_C2K_SUPPORT"
+	depends on !ARCH_MT6735M
+	default n
+	help
+	  This option enables C2K modem support,
+	  if yes, then C2K modem feature is supported,
+	  if no, C2K feature is disabled.
+	  The option default disabled.
+
+config EVDO_DT_SUPPORT
+	bool "EVDO_DT_SUPPORT"
+	depends on MTK_C2K_SUPPORT
+	default n
+	help
+	  To support CDMA+GSM dual talk feature
+	  if yes, then CDMA+GSM dual talk feature is supported,
+	  if no, CDMA+GSM dual talk feature is disabled.
+	  The option default disabled.
+
+config MTK_SVLTE_SUPPORT
+	bool "MTK_SVLTE_SUPPORT"
+	depends on MTK_C2K_SUPPORT
+	default n
+	help
+	  To support SVLTE feature
+	  if yes, then C2K modem SVLTE feature is supported,
+	  if no, C2K modem SVLTE feature is disabled.
+	  The option default disabled.
+
+config MTK_SRLTE_SUPPORT
+	bool "MTK_SRLTE_SUPPORT"
+	depends on MTK_C2K_SUPPORT
+	default n
+	help
+	  To support SRLTE feature
+	  if yes, then C2K modem SRLTE feature is supported,
+	  if no, C2K modem SRLTE feature is disabled.
+	  The option default disabled.
+
+config EVDO_DT_VIA_SUPPORT
+	bool "EVDO_DT_VIA_SUPPORT"
+	depends on MTK_C2K_SUPPORT
+	default n
+	help
+	  To support VIA CBP modem
+	  if yes, then VIA CBP modem is supported,
+	  if no, VIA CBP modem is disabled.
+	  The option default disabled.
 
 config MTK_C2K_OM_SOLUTION1
 	bool "C2K OM solution1 support"
@@ -63,6 +114,16 @@ config MTK_SIM_LOCK_POWER_ON_WRITE_PROTECT
 	default n
 	help
 	  To support SIM lock power on write protect  feature,
+	  if yes, then it is supported,
+	  if no, it is disabled.
+	  The option default disabled.
+
+config CT6M_SUPPORT
+	bool "CT 6M support"
+	depends on MTK_C2K_SUPPORT
+	default n
+	help
+	  To support CT 6M feature,
 	  if yes, then it is supported,
 	  if no, it is disabled.
 	  The option default disabled.

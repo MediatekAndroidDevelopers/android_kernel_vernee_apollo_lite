@@ -33,17 +33,6 @@
 #include <linux/dma-mapping.h>
 #include <mt-plat/mt_ccci_common.h>
 
-/*
- * normal workqueue:   MODEM_CAP_NAPI=0, ENABLE_NAPI_GRO=0, ENABLE_WQ_GRO=0
- * workqueue with GRO: MODEM_CAP_NAPI=0, ENABLE_NAPI_GRO=0, ENABLE_WQ_GRO=1
- * NAPI without GRO:   MODEM_CAP_NAPI=1, ENABLE_NAPI_GRO=0, ENABLE_WQ_GRO=0
- * NAPI with GRO:      MODEM_CAP_NAPI=1, ENABLE_NAPI_GRO=1, ENABLE_WQ_GRO=0
- */
-/* #define ENABLE_NAPI_GRO */
-#ifdef CONFIG_MTK_ECCCI_C2K
-#define ENABLE_WQ_GRO
-#endif
-
 #define  CCMNI_MTU              1500
 #define  CCMNI_TX_QUEUE         1000
 #define  CCMNI_NETDEV_WDT_TO    (1*HZ)
@@ -54,8 +43,6 @@
 #define  SIOCSTXQSTATE          (SIOCDEVPRIVATE + 0)  /* stop/start tx queue */
 #define  SIOCCCMNICFG           (SIOCDEVPRIVATE + 1)  /* configure ccmni/md remapping */
 
-#define  CCMNI_TX_PRINT_F	(0x1 << 0)
-
 typedef struct ccmni_ctl_block ccmni_ctl_block_t;
 
 struct ccmni_ch {
@@ -63,8 +50,6 @@ struct ccmni_ch {
 	int		   rx_ack;
 	int		   tx;
 	int		   tx_ack;
-	int		   dl_ack;
-	int		   multiq;
 };
 
 typedef struct ccmni_instance {
@@ -73,19 +58,15 @@ typedef struct ccmni_instance {
 	struct ccmni_ch    ch;
 	int                net_if_off;
 	atomic_t           usage;
-	/* use pointer to keep these items unique, while switching between CCMNI instances */
-	struct timer_list  *timer;
+	struct timer_list  timer;
 	struct net_device  *dev;
-	struct napi_struct *napi;
+	struct napi_struct napi;
 	unsigned int       rx_seq_num;
 	unsigned int       tx_seq_num[2];
 	unsigned int       flags;
 	spinlock_t	       spinlock;
 	ccmni_ctl_block_t  *ctlb;
 	unsigned long      tx_busy_cnt[2];
-	unsigned long      tx_full_tick;
-	unsigned int       tx_full_cnt;
-	unsigned int       tx_irq_cnt;
 	void               *priv_data;
 } ccmni_instance_t;
 
@@ -96,31 +77,28 @@ typedef struct ccmni_ccci_ops {
 	unsigned int       md_ability;
 	unsigned int       irat_md_id;  /* with which md on iRAT */
 	unsigned int       napi_poll_weigh;
-	int (*send_pkt)(int md_id, int ccmni_idx, void *data, int is_ack);
-	int (*napi_poll)(int md_id, int ccmni_idx, struct napi_struct *napi, int weight);
+	int (*send_pkt)(int md_id, int tx_ch, void *data);
+	int (*napi_poll)(int md_id, int rx_ch, struct napi_struct *napi , int weight);
 	int (*get_ccmni_ch)(int md_id, int ccmni_idx, struct ccmni_ch *channel);
 } ccmni_ccci_ops_t;
 
 typedef struct ccmni_ctl_block {
 	ccmni_ccci_ops_t   *ccci_ops;
-	ccmni_instance_t   *ccmni_inst[32];
+	ccmni_instance_t   *ccmni_inst[16];
 	unsigned int       md_sta;
 	struct wake_lock   ccmni_wakelock;
 	char               wakelock_name[16];
-	unsigned long long net_rx_delay[4];
 } ccmni_ctl_block_t;
 
 struct ccmni_dev_ops {
 	/* must-have */
 	int  skb_alloc_size;
 	int  (*init)(int md_id, ccmni_ccci_ops_t *ccci_info);
-	int  (*rx_callback)(int md_id, int ccmni_idx, struct sk_buff *skb, void *priv_data);
-	void (*md_state_callback)(int md_id, int ccmni_idx, MD_STATE state, int is_ack);
+	int  (*rx_callback)(int md_id, int rx_ch, struct sk_buff *skb, void *priv_data);
+	void (*md_state_callback)(int md_id, int rx_ch, MD_STATE state);
 	void (*exit)(int md_id);
-	void (*dump)(int md_id, int ccmni_idx, unsigned int flag);
-	void (*dump_rx_status)(int md_id, unsigned long long *status);
-	struct ccmni_ch *(*get_ch)(int md_id, int ccmni_idx);
-	int (*is_ack_skb)(int md_id, struct sk_buff *skb);
+	void (*dump)(int md_id, int rx_ch, unsigned int flag);
+	void (*dump_rx_status)(int md_id, int rx_ch, unsigned long long *status);
 };
 
 

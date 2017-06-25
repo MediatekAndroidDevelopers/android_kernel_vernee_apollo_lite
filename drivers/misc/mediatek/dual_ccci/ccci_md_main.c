@@ -52,8 +52,10 @@
 #ifdef ENABLE_32K_CLK_LESS
 #include <mt-plat/mtk_rtc.h>
 #endif
-#include <ccci_common.h>
-
+/* -------------ccci sbp feature define---------------------*/
+#ifdef CONFIG_MTK_MD_SBP_CUSTOM_VALUE
+static unsigned int md_sbp_value[MAX_MD_NUM];
+#endif	/*  CONFIG_MTK_MD_SBP_CUSTOM_VALUE */
 /* ------------------- md control variable define---------------------*/
 struct md_ctl_block_t {
 	struct mutex ccci_md_boot_mutex;	/*  for ccci_mb_mutex */
@@ -82,7 +84,6 @@ struct md_ctl_block_t {
 	unsigned int ee_info_got;
 	unsigned int ee_info_flag;
 	unsigned int mdl_mode;
-	unsigned int sbp_code;
 	spinlock_t ctl_lock;
 	unsigned int m_md_id;
 	struct ccci_reset_sta reset_sta[NR_CCCI_RESET_USER];
@@ -164,8 +165,6 @@ int ccci_pcm_base_req(int md_id, void *addr_vir, void *addr_phy,
 int ccci_uart_base_req(int md_id, int port, void *addr_vir, void *addr_phy,
 		       unsigned int *len)
 {
-	if (md_id < 0 || md_id >= MAX_MD_NUM)
-		return -CCCI_ERR_INVALID_PARAM;
 	if (port >= CCCI_UART_PORT_NUM)
 		return -CCCI_ERR_INVALID_PARAM;
 	if (md_ctlb[md_id] == NULL)
@@ -825,6 +824,22 @@ int ccci_dump_md_register_ext(int md_id, char buf[], unsigned int len)
 }
 #endif /* ENABLE_DUMP_MD_REG */
 
+#ifdef CONFIG_MTK_MD_SBP_CUSTOM_VALUE
+int ccci_set_md_sbp(int md_id, unsigned int md_sbp)
+{
+	CCCI_MSG_INF(md_id, "ctl", "ccci_set_md_sbp(%d, 0x%x)\n", md_id,
+		     md_sbp);
+
+	switch (md_id) {
+	case MD_SYS1:
+		md_sbp_value[MD_SYS1] = md_sbp;
+		return 0;
+
+	default:
+		return -1;
+	}
+}
+#endif	/*  CONFIG_MTK_MD_SBP_CUSTOM_VALUE */
 
 void config_misc_info(int md_id, unsigned int base[], unsigned int size)
 {
@@ -833,7 +848,6 @@ void config_misc_info(int md_id, unsigned int base[], unsigned int size)
 #ifdef ENABLE_RANDOM_SEED
 	unsigned int random_seed = 0;
 #endif
-	phys_addr_t r_rw_base;
 
 	if (NULL == base)
 		return;
@@ -846,8 +860,7 @@ void config_misc_info(int md_id, unsigned int base[], unsigned int size)
 	misc_info.next = 0;
 
 	/* --- Feature 0, remapping address */
-	get_md_resv_mem_info(md_id, &r_rw_base, NULL, NULL, NULL);
-	misc_info.feature_0_val[0] = (unsigned int)r_rw_base;
+	misc_info.feature_0_val[0] = get_md_mem_start_addr(md_id);
 	misc_info.support_mask |= (FEATURE_SUPPORT << MISC_DMA_ADDR);
 	/* --- Feature 1, 32K clock less */
 #if defined(ENABLE_32K_CLK_LESS)
@@ -892,11 +905,19 @@ void config_misc_info(int md_id, unsigned int base[], unsigned int size)
 		(FEATURE_NOT_SUPPORT << (MISC_MD_COCLK_SETTING * 2));
 #endif /*  ENABLE_GPS_MD_COCLK */
 
+#ifdef CONFIG_MTK_MD_SBP_CUSTOM_VALUE
 	CCCI_MSG_INF(md_id, "ctl",
 		"config_misc_info() md_id:%d, sbp_code:0x%x\n",
-		md_id, md_ctlb[md_id]->sbp_code);
-	misc_info.feature_4_val[0] = md_ctlb[md_id]->sbp_code;
-	misc_info.support_mask |= (FEATURE_SUPPORT << (MISC_MD_SBP_SETTING * 2));
+		md_id, md_sbp_value[md_id]);
+	if (md_sbp_value[md_id] > 0) {
+		misc_info.feature_4_val[0] = md_sbp_value[md_id];
+		misc_info.support_mask |=
+			(FEATURE_SUPPORT << (MISC_MD_SBP_SETTING * 2));
+	}
+#else
+	CCCI_MSG_INF(md_id, "ctl",
+		"config_misc_info() NOT support MISC_MD_SBP_SETTING\n");
+#endif	/*  CONFIG_MTK_MD_SBP_CUSTOM_VALUE */
 	memcpy(base, &misc_info, sizeof(struct misc_info_t));
 }
 
@@ -1291,7 +1312,7 @@ void ccci_aed(int md_id, unsigned int dump_flag, char *aed_str)
 	char buff[AED_STR_LEN];
 	char *img_inf;
 
-	img_inf = ccci_get_md_info_str(md_id);
+	img_inf = get_md_info_str(md_id);
 	if (img_inf == NULL)
 		img_inf = "";
 	info_str_len = strlen(aed_str);
@@ -1574,23 +1595,6 @@ int md_unregister_call_chain(int md_id, struct MD_CALL_BACK_QUEUE *queue)
 /* modem boot up function                                                   */
 /*                                                                          */
 /****************************************************************************/
-void ccci_start_bootup_timer(int md_id, int second)
-{
-	struct md_ctl_block_t *ctl_b;
-
-	ctl_b = md_ctlb[md_id];
-	mod_timer(&ctl_b->md_boot_up_check_timer, jiffies + second * HZ);
-	/*CCCI_MSG_INF(md_id, "ctl", "%s!\n", __func__);*/
-}
-
-void ccci_stop_bootup_timer(int md_id)
-{
-	struct md_ctl_block_t *ctl_b;
-
-	ctl_b = md_ctlb[md_id];
-	del_timer(&ctl_b->md_boot_up_check_timer);
-	/*CCCI_MSG_INF(md_id, "ctl", "%s!\n", __func__);*/
-}
 static void md_boot_up_timeout_func(unsigned long data)
 {
 	struct md_ctl_block_t *ctl_b = (struct md_ctl_block_t *) data;
@@ -1806,7 +1810,7 @@ static int set_md_runtime(int md_id,
 		    (md_id, "net_ul_ctl", (char *)&ul_ctl_mem_size,
 		     sizeof(int)) != sizeof(int)) {
 			CCCI_MSG_INF(md_id, "ctl", "Get net_ul_ctl fail\n");
-			ul_ctl_mem_size = 0;
+			dl_ctl_mem_size = 0;
 		}
 		if (dl_ctl_mem_size) {
 			runtime->NetDLCtrlShareMemBase[i] =
@@ -1861,7 +1865,7 @@ static int set_md_runtime(int md_id,
 		runtime->MDExExpInfoBase = 0;
 		runtime->MDExExpInfoSize = 0;
 	}
-	if (ctl_b->smem_table->ccci_misc_info_size) {
+	if (ctl_b->smem_table->ccci_md_ex_exp_info_smem_size) {
 		runtime->MiscInfoBase =
 		    ctl_b->smem_table->ccci_misc_info_base_phy -
 		    get_md2_ap_phy_addr_fixed();
@@ -1955,7 +1959,8 @@ int ccci_send_run_time_data(int md_id)
 		return ret;
 	}
 
-	ccci_start_bootup_timer(md_id, BOOT_TIMER_HS2);
+	if ((get_debug_mode_flag() & (DBG_FLAG_JTAG | DBG_FLAG_DEBUG)) == 0)
+		mod_timer(&ctl_b->md_boot_up_check_timer, jiffies + 30 * HZ);
 
 	CCCI_MSG_INF(md_id, "ctl", "wait for NORMAL_BOOT_ID @ %d\n",
 		     get_curr_md_state(md_id));
@@ -1981,12 +1986,10 @@ int ccci_set_md_boot_data(int md_id, unsigned int data[], int len)
 	int ret = 0;
 
 	ctl_b = md_ctlb[md_id];
-	if (len <= 0 || data == NULL)
-		return -1;
-
-	ctl_b->mdl_mode = data[0];
-	ctl_b->sbp_code = data[1];
-
+	if (len > 0 && data != NULL)
+		ctl_b->mdl_mode = data[0];
+	else
+		ret = -1;
 	return ret;
 }
 /* ccci_start_modem: do start modem operation */
@@ -2003,22 +2006,19 @@ int ccci_start_modem(int md_id)
 	if (ctl_b->ipo_h_restore) {
 		ctl_b->ipo_h_restore = 0;
 		ccci_misc_ipo_h_restore(md_id);
-		if (!modem_run_env_ready(md_id))
-			ccci_load_firmware_helper(md_id, err_str, 256);
+		ccci_load_firmware(md_id, LOAD_ALL_IMG, err_str, 256);
 	} else if (ctl_b->need_reload_image) {
 		CCCI_MSG_INF(md_id, "ctl", "re-load firmware!\n");
-		if (!modem_run_env_ready(md_id)) {
-			ret = ccci_load_firmware_helper(md_id, err_str, 256);
-			if (ret < 0) {
-				CCCI_MSG_INF(md_id, "ctl",
-					     "load firmware fail, so modem boot fail:%d!\n",
-					     ret);
-				/* ccci_aed(md_id, 0, err_str); */
-				return -CCCI_ERR_LOAD_IMG_NOMEM;
-			}
-			/* when load firmware successfully, no need to load it again when reset modem */
-			CCCI_MSG_INF(md_id, "ctl", "load firmware successful!\n");
+		ret = ccci_load_firmware(md_id, RELOAD_ONLY, err_str, 256);
+		if (ret < 0) {
+			CCCI_MSG_INF(md_id, "ctl",
+				     "load firmware fail, so modem boot fail:%d!\n",
+				     ret);
+			ccci_aed(md_id, 0, err_str);
+			return -CCCI_ERR_LOAD_IMG_NOMEM;
 		}
+		/* when load firmware successfully, no need to load it again when reset modem */
+		CCCI_MSG_INF(md_id, "ctl", "load firmware successful!\n");
 		ctl_b->need_reload_image = 0;
 	}
 
@@ -2031,7 +2031,7 @@ int ccci_start_modem(int md_id)
 
 	ret = let_md_go(md_id);
 	if (ret == 0)
-		ccci_start_bootup_timer(md_id, BOOT_TIMER_HS1);
+		mod_timer(&ctl_b->md_boot_up_check_timer, jiffies + 5 * HZ);
 	else
 		CCCI_MSG_INF(md_id, "ctl", "ungate_md fail: %d\n", ret);
 
@@ -2050,7 +2050,7 @@ int ccci_pre_stop(int md_id)
 	if (ctl_b == NULL)
 		return -CCCI_ERR_FATAL_ERR;
 	/* prevent another reset modem action from wdt timeout IRQ during modem reset */
-	if (atomic_inc_return(&ctl_b->md_reset_on_going) > 1) {
+	if (atomic_inc_and_test(&ctl_b->md_reset_on_going) > 1) {
 		CCCI_MSG_INF(md_id, "ctl", "One reset flow is on-going\n");
 		return -CCCI_ERR_MD_IN_RESET;
 	}
@@ -2085,20 +2085,22 @@ int ccci_stop_modem(int md_id, unsigned int timeout)
 	}
 	ccci_md_logger_notify();
 	CCCI_MSG_INF(md_id, "ctl", "md power off before\n");
+
+	CCCI_MSG_INF(md_id, "ctl", "stop modem, delete boot up check timer\n");
+	del_timer(&ctl_b->md_boot_up_check_timer);
 	ccmni_v2_dump(md_id);
 	let_md_stop(md_id, timeout);
 	for (i = 0; i < NR_CCCI_RESET_USER; i++)
 		ctl_b->reset_sta[i].is_reset = 0;
 	md_call_chain(&ctl_b->md_notifier, CCCI_MD_RESET);
+	CCCI_MSG_INF(md_id, "ctl", "md power off end\n");
 	ccmni_v2_dump(md_id);
 	/*  Reset share memory if needed */
 	memset((void *)ctl_b->smem_table->ccci_md_ex_exp_info_smem_base_virt, 0,
 	       sizeof(struct modem_exception_exp_t));
 	ccci_fs_resetfifo(md_id);
 	ret = logic_layer_reset(md_id);
-	CCCI_MSG_INF(md_id, "ctl", "stop modem, delete boot up check timer\n");
-	ccci_stop_bootup_timer(md_id);
-	CCCI_MSG_INF(md_id, "ctl", "md power off end\n");
+
 	return ret;
 }
 
@@ -2350,7 +2352,6 @@ int ccci_force_md_assert(int md_id, char buf[], unsigned int len)
 	return 0;
 }
 
-
 /*  ccci_md_ctrl_cb: CCCI_CONTROL_RX callback function for MODEM */
 /*  @buff: pointer to a CCCI buffer */
 /*  @private_data: pointer to private data of CCCI_CONTROL_RX */
@@ -2369,7 +2370,7 @@ void ccci_md_ctrl_cb(void *private)
 		if (msg.id == MD_INIT_START_BOOT &&
 		    msg.reserved == MD_INIT_CHK_ID &&
 		    ctl_b->md_boot_stage == MD_BOOT_STAGE_0) {
-			ccci_stop_bootup_timer(md_id);
+			del_timer(&ctl_b->md_boot_up_check_timer);
 			CCCI_MSG_INF(md_id, "ctl",
 				     "receive MD_INIT_START_BOOT\n");
 			/* set_curr_md_state(md_id, MD_BOOT_STAGE_1); */
@@ -2380,7 +2381,7 @@ void ccci_md_ctrl_cb(void *private)
 			ccci_system_message(md_id, CCCI_MD_MSG_BOOT_UP, 0);
 		} else if (msg.id == NORMAL_BOOT_ID &&
 			   ctl_b->md_boot_stage == MD_BOOT_STAGE_1) {
-			ccci_stop_bootup_timer(md_id);
+			del_timer(&ctl_b->md_boot_up_check_timer);
 			CCCI_MSG_INF(md_id, "ctl", "receive NORMAL_BOOT_ID\n");
 			/* set_curr_md_state(md_id, MD_BOOT_STAGE_2); */
 			ctl_b->md_boot_stage = MD_BOOT_STAGE_2;
@@ -2391,7 +2392,7 @@ void ccci_md_ctrl_cb(void *private)
 			ccci_system_message(md_id, CCCI_MD_MSG_BOOT_READY, 0);
 
 		} else if (msg.id == MD_EX) {
-			ccci_stop_bootup_timer(md_id);
+			del_timer(&ctl_b->md_boot_up_check_timer);
 			if (unlikely(msg.reserved != MD_EX_CHK_ID))
 				CCCI_MSG_INF(md_id, "ctl",
 					     "receive invalid MD_EX\n");
@@ -2451,7 +2452,8 @@ void ccci_md_ctrl_cb(void *private)
 				if (need_update_state) {
 					md_call_chain(&ctl_b->md_notifier,
 						      CCCI_MD_EXCEPTION);
-					ccci_stop_bootup_timer(md_id);
+					del_timer
+					    (&ctl_b->md_boot_up_check_timer);
 				}
 				/* atomic_set(&ctl_b->md_ex_ok, 1); */
 				mod_timer(&ctl_b->md_ex_monitor, jiffies);
@@ -2510,19 +2512,15 @@ static int boot_md(int md_id)
 
 	/*  Step 1, load image */
 	if (ctl_b->is_first_boot) {
-		if (!modem_run_env_ready(md_id)) {
-			ret = ccci_load_firmware_helper(md_id, err_str, 256);
-			if (ret < 0) {
-				CCCI_MSG_INF(md_id, "ctl",
-					     "load firmware fail, so modem boot fail!\n");
-				/* ccci_aed(md_id, 0, err_str); */
-				return ret;
-			}
+		ret = ccci_load_firmware(md_id, LOAD_ALL_IMG, err_str, 256);
+		if (ret < 0) {
+			CCCI_MSG_INF(md_id, "ctl",
+				     "load firmware fail, so modem boot fail!\n");
+			ccci_aed(md_id, 0, err_str);
+			return ret;
 		}
 		/* when load firmware successfully, no need to load it again when reset modem */
 		ctl_b->is_first_boot = 0;
-		/* First boot no need to reload modem image */
-		ctl_b->need_reload_image = 0;
 		CCCI_MSG_INF(md_id, "ctl",
 			"load firmware successful!\n");
 	} else {
@@ -2563,29 +2561,39 @@ static int boot_md(int md_id)
 	return ret;
 }
 
-int legacy_boot_md_show(int md_id, char *buf, int size)
+static ssize_t boot_md_show(char *buf)
 {
-	if (!get_modem_is_enabled(md_id))
-		return snprintf(buf, size, "md%d:n/a", (md_id + 1));
+	int md_num = get_md_sys_max_num();
+	int i;
+	int curr = 0;
 
-	return snprintf(buf, size, "md%d:%d", (md_id + 1),
-				     md_ctlb[md_id]->md_boot_stage);
+	for (i = 0; i < md_num; i++) {
+		if (!get_modem_is_enabled(i))
+			continue;
+		else
+			curr +=
+			    snprintf(&buf[curr], 128, "md%d:%d\n", (i + 1),
+				     md_ctlb[i]->md_boot_stage);
+	}
+
+	return curr;
 }
 
 static ssize_t boot_md_store(const char *buf, size_t count)
 {
 	struct md_ctl_block_t *ctl_b;
-	int md_id = -1;
+	int md_id;
 
 	if (buf[0] == '0')
 		md_id = 0;
 	else if (buf[0] == '1')
 		md_id = 1;
-	if (md_id < 0 || md_id >= MAX_MD_NUM) {
+	else {
 		/* md_id = 100;         */
 		CCCI_MSG("[Error] invalid md sys id: %d\n", buf[0]);
 		return 0;
 	}
+
 	ctl_b = md_ctlb[md_id];
 	if (ctl_b == NULL) {
 		CCCI_MSG_INF(md_id, "ctl", "[Error]md ctlb is null\n");
@@ -2604,16 +2612,6 @@ static ssize_t boot_md_store(const char *buf, size_t count)
 	mutex_unlock(&ctl_b->ccci_md_boot_mutex);
 
 	return count;
-}
-
-int legacy_boot_md_store(int md_id)
-{
-	if (md_id == MD_SYS1)
-		return boot_md_store("0", 0);
-	if (md_id == MD_SYS2)
-		return boot_md_store("1", 0);
-
-	return 0;
 }
 
 /****************************************************************************/
@@ -2741,6 +2739,8 @@ int ccci_md_ctrl_init(int md_id)
 	/* register fast dormancy function as ccci kernel func and suspend callback */
 	register_ccci_kern_func_by_md_id(md_id, ID_CCCI_DORMANCY,
 					 ccci_dormancy);
+	register_suspend_notify(md_id, SLP_ID_MD_FAST_DROMANT,
+				md_fast_dormancy);
 
 	/* md send msg before it trigger watdog timeout irq */
 	register_ccci_sys_call_back(md_id, MD_WDT_MONITOR, md_wdt_monitor);
@@ -2786,6 +2786,12 @@ int ccci_md_ctrl_init(int md_id)
 
 int ccci_md_ctrl_common_init(void)
 {
+	register_filter_func("-l", ccci_msg_filter_store, ccci_msg_filter_show);
+	register_filter_func("-c", ccci_ch_filter_store, ccci_ch_filter_show);
+	/*  MUST register callbacks after memory is allocated */
+	/* boot_register_md_func(boot_md_show, boot_md_store); */
+
+	register_ccci_attr_func("boot", boot_md_show, boot_md_store);
 	return 0;
 }
 
@@ -2799,7 +2805,8 @@ void ccci_md_ctrl_exit(int md_id)
 	if (ctlb == NULL)
 		return;
 	wake_lock_destroy(&ctlb->trm_wake_lock);
-	ccci_stop_bootup_timer(md_id);
+	del_timer(&ctlb->md_boot_up_check_timer);
+	del_timer(&ctlb->md_boot_up_check_timer);
 	/* ccci_free_smem(md_id); */
 	tasklet_kill(&ctlb->md_notifier.tasklet);
 	kfree(ctlb);

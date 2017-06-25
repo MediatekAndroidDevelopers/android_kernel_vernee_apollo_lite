@@ -21,19 +21,8 @@
 #include "ccci_config.h"
 #include "ccci_ringbuf.h"
 #include "ccci_core.h"
-#include "ccci_modem.h"
 
 #define QUEUE_NUM   8
-
-#define FLOW_CTRL_HEAD	0x464C4F57	/*FLOW*/
-#define FLOW_CTRL_TAIL	0x4354524C	/*CTRL*/
-
-struct ccif_flow_control {
-	unsigned int head_magic;
-	volatile unsigned int ap_busy_queue;
-	volatile unsigned int md_busy_queue;
-	unsigned int tail_magic;
-};
 
 struct ccif_sram_layout {
 	struct ccci_header dl_header;
@@ -45,10 +34,8 @@ struct ccif_sram_layout {
 struct md_ccif_queue {
 	DIRECTION dir;
 	unsigned char index;
-	unsigned char resume_cnt;
-	unsigned char debug_id;
-	unsigned char wakeup;
 	atomic_t rx_on_going;
+	unsigned char debug_id;
 	int budget;
 	unsigned int ccif_ch;
 	struct ccci_modem *modem;
@@ -87,80 +74,9 @@ struct md_ccif_ctrl {
 	struct timer_list traffic_monitor;
 	struct work_struct wdt_work;
 	struct md_hw_info *hw_info;
-	struct ccif_flow_control *flow_ctrl;
 };
-
-static inline void ccif_set_busy_queue(struct md_ccif_ctrl *md_ctrl, unsigned int qno)
-{
-	if (!md_ctrl->flow_ctrl)
-		return;
-	/*set busy bit*/
-	md_ctrl->flow_ctrl->ap_busy_queue |= (0x1 << qno);
-}
-
-static inline void ccif_clear_busy_queue(struct md_ccif_ctrl *md_ctrl, unsigned int qno)
-{
-	if (!md_ctrl->flow_ctrl)
-		return;
-	/*clear busy bit*/
-	md_ctrl->flow_ctrl->ap_busy_queue &= ~(0x1 << qno);
-}
-
-static inline void ccif_reset_busy_queue(struct md_ccif_ctrl *md_ctrl)
-{
-	if (!md_ctrl->flow_ctrl)
-		return;
-	/*reset busy bit*/
-	md_ctrl->flow_ctrl->head_magic = FLOW_CTRL_HEAD;
-	md_ctrl->flow_ctrl->ap_busy_queue = 0x0;
-	md_ctrl->flow_ctrl->md_busy_queue = 0x0;
-	/*Notice: tail will be set by modem if it supports flow control*/
-	/*md_ctrl->flow_ctrl->tail_magic = FLOW_CTRL_TAIL;*/
-}
-
-static inline int ccif_is_md_queue_busy(struct md_ccif_ctrl *md_ctrl, unsigned int qno)
-{
-	/*caller should handle error*/
-	if (!md_ctrl->flow_ctrl)
-		return -1;
-	if (unlikely(md_ctrl->flow_ctrl->head_magic != FLOW_CTRL_HEAD ||
-			md_ctrl->flow_ctrl->tail_magic != FLOW_CTRL_TAIL))
-		return -1;
-
-	return (md_ctrl->flow_ctrl->md_busy_queue & (0x1 << qno));
-}
-
-static inline int ccif_is_md_flow_ctrl_supported(struct md_ccif_ctrl *md_ctrl)
-{
-	if (!md_ctrl->flow_ctrl)
-		return -1;
-	/*both head and tail are right. make sure MD support flow control too*/
-	if (likely(md_ctrl->flow_ctrl->head_magic == FLOW_CTRL_HEAD &&
-			md_ctrl->flow_ctrl->tail_magic == FLOW_CTRL_TAIL))
-		return 1;
-	else
-		return 0;
-}
-
-static inline void ccif_wake_up_tx_queue(struct ccci_modem *md, unsigned int qno)
-{
-	struct md_ccif_ctrl *md_ctrl = (struct md_ccif_ctrl *)md->private_data;
-	struct md_ccif_queue *queue = &md_ctrl->txq[qno];
-
-	ccif_clear_busy_queue(md_ctrl, qno);
-	queue->wakeup = 1;
-	wake_up(&queue->req_wq);
-}
-
-static inline int ccif_queue_broadcast_state(struct ccci_modem *md, MD_STATE state, DIRECTION dir, int index)
-{
-	ccci_md_status_notice(md, dir, -1, index, state);
-	return 0;
-}
-
-
 /* always keep this in mind: what if there are more than 1 modems using CLDMA... */
-extern void mt_irq_dump_status(int irq);
+
 extern void mt_irq_set_sens(unsigned int irq, unsigned int sens);
 extern void mt_irq_set_polarity(unsigned int irq, unsigned int polarity);
 /* used for throttling feature - start */
