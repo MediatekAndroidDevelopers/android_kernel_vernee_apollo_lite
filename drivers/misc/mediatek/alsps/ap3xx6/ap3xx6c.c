@@ -2217,4 +2217,3 @@ module_exit(ap3xx6_exit);
 MODULE_AUTHOR("YC Hou");
 MODULE_DESCRIPTION("ap3xx6 driver");
 MODULE_LICENSE("GPL");
-

@@ -64,16 +64,27 @@ config GTP_WARP_Y_ON
 	  To compile this dirver as a module, choose M here: the
 	  module will be called.
 
-config GTP_GESTURE_WAKEUP
+config GTP_SCP_GESTURE_WAKEUP
 	bool "GT9XX for Mediatek package"
 	default n
 	help
-	  Say Y here if you have GT9XX touch panel GTP_GESTURE_WAKEUP.
+	  Say Y here if you have GT9XX touch panel GTP_SCP_GESTURE_WAKEUP.
 
 	  If unsure, say N.
 
 	  To compile this dirver as a module, choose M here: the
 	  module will be called.
+
+config GTP_SLIDE_WAKEUP
+	bool "GTP_SLIDE_WAKEUP"
+	default n
+	help
+	Say Y here if you have GT9XX_hotknot touch panel.
+
+	If unsure, say N.
+
+	To compile this dirver as a module, choose M here: the
+	module will be called.
 
 config GTP_HOTKNOT
 	bool "GT9XX for Mediatek package"

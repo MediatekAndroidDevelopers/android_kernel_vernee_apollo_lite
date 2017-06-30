@@ -107,7 +107,7 @@ extern unsigned char gtp_default_FW_fl[];
 #define GTP_CONFIG_MIN_LENGTH       186
 #define GTP_CONFIG_MAX_LENGTH       240
 #define GTP_WITH_PEN          0
-#define GTP_SLIDE_WAKEUP      0
+#define GTP_SLIDE_WAKEUP      1
 #define GTP_DBL_CLK_WAKEUP    0	/* double-click wakup, function together with GTP_SLIDE_WAKEUP*/
 /*#define CONFIG_HOTKNOT_BLOCK_RW      1*/
 

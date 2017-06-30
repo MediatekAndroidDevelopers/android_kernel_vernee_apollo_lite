@@ -42,6 +42,7 @@ static struct task_struct *thread;
 static struct task_struct *probe_thread;
 static bool check_flag;
 static int tpd_polling_time = 50;
+static bool irq_enabled = false;
 
 static DECLARE_WAIT_QUEUE_HEAD(waiter);
 DEFINE_MUTEX(i2c_access);
@@ -62,20 +63,49 @@ struct touch_virtual_key_map_t {
 static struct touch_virtual_key_map_t touch_key_point_maping_array[] = GTP_KEY_MAP_ARRAY;
 #endif
 
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+
+#define TAG_GEST "smartwake"
+enum DOZE_T {
+	DOZE_DISABLED = 0,
+	DOZE_ENABLED = 1,
+	DOZE_WAKEUP = 2,
+};
+static enum DOZE_T doze_status = DOZE_DISABLED;
+static s8 gtp_enter_doze(struct i2c_client *client);
+
+enum support_gesture_e {
+    TW_SUPPORT_NONE_SLIDE_WAKEUP = 0x0,
+    TW_SUPPORT_UP_SLIDE_WAKEUP = 0x1,
+    TW_SUPPORT_DOWN_SLIDE_WAKEUP = 0x2,
+    TW_SUPPORT_LEFT_SLIDE_WAKEUP = 0x4,
+    TW_SUPPORT_RIGHT_SLIDE_WAKEUP = 0x8,
+    TW_SUPPORT_E_SLIDE_WAKEUP = 0x10,
+    TW_SUPPORT_O_SLIDE_WAKEUP = 0x20,
+    TW_SUPPORT_W_SLIDE_WAKEUP = 0x40,
+    TW_SUPPORT_C_SLIDE_WAKEUP = 0x80,
+    TW_SUPPORT_M_SLIDE_WAKEUP = 0x100,
+    TW_SUPPORT_DOUBLE_CLICK_WAKEUP = 0x200,
+
+    TW_SUPPORT_GESTURE_IN_ALL = (TW_SUPPORT_UP_SLIDE_WAKEUP | TW_SUPPORT_DOWN_SLIDE_WAKEUP |
+                                TW_SUPPORT_LEFT_SLIDE_WAKEUP | TW_SUPPORT_RIGHT_SLIDE_WAKEUP | TW_SUPPORT_E_SLIDE_WAKEUP |
+                                TW_SUPPORT_O_SLIDE_WAKEUP |TW_SUPPORT_W_SLIDE_WAKEUP |TW_SUPPORT_C_SLIDE_WAKEUP |
+                                TW_SUPPORT_M_SLIDE_WAKEUP | TW_SUPPORT_DOUBLE_CLICK_WAKEUP)
+};
+
+u32 support_gesture = TW_SUPPORT_GESTURE_IN_ALL;/*TW_SUPPORT_NONE_SLIDE_WAKEUP;*/
+static char wakeup_string_buffer[32] = {};
+
+static int smartwake_active = 1;
+
+#endif
+
 #ifdef CONFIG_OF_TOUCH
 unsigned int touch_irq = 0;
 #endif
 
-#if (GTP_SCP_GESTURE_WAKEUP || GTP_SLIDE_WAKEUP)
-typedef enum {
-	DOZE_DISABLED = 0,
-	DOZE_ENABLED = 1,
-	DOZE_WAKEUP = 2,
-} DOZE_T;
-static DOZE_T doze_status = DOZE_DISABLED;
-#endif
-
 #if GTP_SCP_GESTURE_WAKEUP
+
 typedef enum {
 	/*SCP->AP*/
 	IPI_COMMAND_SA_GESTURE_TYPE,
@@ -378,10 +408,41 @@ static ssize_t store_scp_ctrl(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR(tpd_scp_ctrl, 0664, show_scp_ctrl, store_scp_ctrl);
 #endif
 
+
+
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+static ssize_t show_smartwake_active(struct device *dev, struct device_attribute *attr, char *buf)
+{
+        return sprintf(buf, "%d\n", smartwake_active);
+}
+
+static ssize_t store_smartwake_active(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+    int input;
+    sscanf(buf, "%d", &input);
+    if (input == 0 || input == 1) {
+	smartwake_active = input;
+    }
+    return size;
+}
+static DEVICE_ATTR(smartwake_active, 0664, show_smartwake_active, store_smartwake_active);
+
+static ssize_t show_wakeup_gesture(struct device *dev, struct device_attribute *attr, char *buf)
+{
+        return sprintf(buf, "%s\n", wakeup_string_buffer);
+}
+static DEVICE_ATTR(wakeup_gesture, 0664, show_wakeup_gesture, NULL);
+#endif
+
+
 static struct device_attribute *gt9xx_attrs[] = {
 	&dev_attr_tpd_refresh_rate,
 #if GTP_SCP_GESTURE_WAKEUP
 	&dev_attr_tpd_scp_ctrl,
+#endif
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+	&dev_attr_smartwake_active,
+	&dev_attr_wakeup_gesture,
 #endif
 };
 
@@ -847,7 +908,7 @@ s32 gtp_i2c_read(struct i2c_client *client, u8 *buf, s32 len)
 
 	if (!ret)
 		return 2;
-#if GTP_SLIDE_WAKEUP
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
 	if (DOZE_ENABLED == doze_status)
 		return ret;
 #endif
@@ -953,7 +1014,7 @@ s32 gtp_i2c_write(struct i2c_client *client, u8 *buf, s32 len)
 
 	if (!ret)
 		return 1;
-#if GTP_SLIDE_WAKEUP
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
 	if (DOZE_ENABLED == doze_status)
 		return ret;
 #endif
@@ -1961,7 +2022,6 @@ static int tpd_registration(void *client)
 #ifdef CONFIG_GTP_CREATE_WR_NODE
 	init_wr_node(i2c_client_point);
 #endif
-
 	thread = kthread_run(touch_event_handler, 0, TPD_DEVICE);
 
 	if (IS_ERR(thread)) {
@@ -1980,8 +2040,9 @@ static int tpd_registration(void *client)
 	ret = get_md32_semaphore(SEMAPHORE_TOUCH);
 	if (ret < 0)
 		GTP_ERROR("[TOUCH] HW semaphore reqiure timeout\n");
-#elif GTP_SLIDE_WAKEUP
+#elif defined(CONFIG_GTP_SLIDE_WAKEUP)
 	input_set_capability(tpd->dev, EV_KEY, KEY_POWER);
+    	input_set_capability(tpd->dev, EV_KEY, KEY_PROG3);
 #endif
 
 #if GTP_WITH_PEN
@@ -2078,7 +2139,7 @@ static irqreturn_t tpd_eint_interrupt_handler(unsigned irq, struct irq_desc *des
 	tpd_flag = 1;
 	/* enter EINT handler disable INT, make sure INT is disable when handle touch event including top/bottom half */
 	/* use _nosync to avoid deadlock */
-	disable_irq_nosync(touch_irq);
+	//disable_irq_nosync(touch_irq);
 	wake_up_interruptible(&waiter);
 	return IRQ_HANDLED;
 }
@@ -2116,7 +2177,11 @@ void force_reset_guitar(void)
 		return;
 	GTP_INFO("force_reset_guitar");
 	is_resetting = 1;
-	disable_irq(touch_irq);
+
+	if (irq_enabled) {
+		disable_irq(touch_irq);
+		irq_enabled = false;
+	}
 
 	GTP_GPIO_OUTPUT(GTP_RST_PORT, 0);
 	GTP_GPIO_OUTPUT(GTP_INT_PORT, 0);
@@ -2130,7 +2195,10 @@ void force_reset_guitar(void)
 		GTP_ERROR("regulator_enable() failed!\n");
 	msleep(20);
 
-	enable_irq(touch_irq);
+	if (!irq_enabled) {
+		enable_irq(touch_irq);
+		irq_enabled = true;
+	}
 
 	for (i = 0; i < 5; i++) {
 		/*Reset Guitar*/
@@ -2445,10 +2513,21 @@ static int touch_event_handler(void *unused)
 	u8 proximity_status;
 #endif
 
-#if GTP_SLIDE_WAKEUP
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+	char *none_wakeup[2] = {"GESTURE=NONE",NULL};
+	char *left_wakeup[2] = {"GESTURE=LEFT",NULL};
+	char *right_wakeup[2] = {"GESTURE=RIGHT",NULL};
+	char *up_wakeup[2] = {"GESTURE=UP",NULL};
+	char *down_wakeup[2] = {"GESTURE=DOWN",NULL};
+	char *doubleClick_wakeup[2] = {"GESTURE=DOUBLE_CLICK",NULL};
+	char *c_wakeup[2] = {"GESTURE=C",NULL};
+	char *e_wakeup[2] = {"GESTURE=E",NULL};
+	char *m_wakeup[2] = {"GESTURE=M",NULL};
+	char *o_wakeup[2] = {"GESTURE=O",NULL};
+	char *w_wakeup[2] = {"GESTURE=W",NULL};
+	char **envp;
 	u8 doze_buf[3] = { 0x81, 0x4B };
 #endif
-
 
 	sched_setscheduler(current, SCHED_RR, &param);
 	do {
@@ -2465,49 +2544,122 @@ static int touch_event_handler(void *unused)
 #ifdef CONFIG_GTP_CHARGER_SWITCH
 		gtp_charger_switch(0);
 #endif
-#if GTP_SLIDE_WAKEUP
-		if (DOZE_ENABLED == doze_status) {
-			ret = gtp_i2c_read(i2c_client_point, doze_buf, 3);
-			GTP_DEBUG("0x814B = 0x%02X", doze_buf[2]);
-			if (ret > 0) {
-				if (0xAA == doze_buf[2]) {
-					GTP_INFO("Forward slide to light up the screen!");
-					doze_status = DOZE_WAKEUP;
-					input_report_key(tpd->dev, KEY_POWER, 1);
-					input_sync(tpd->dev);
-					input_report_key(tpd->dev, KEY_POWER, 0);
-					input_sync(tpd->dev);
-					/* clear 0x814B*/
-					doze_buf[2] = 0x00;
-					gtp_i2c_write(i2c_client_point, doze_buf, 3);
-				} else if (0xBB == doze_buf[2]) {
-					GTP_INFO("Backward slide to light up the screen!");
-					doze_status = DOZE_WAKEUP;
-					input_report_key(tpd->dev, KEY_POWER, 1);
-					input_sync(tpd->dev);
-					input_report_key(tpd->dev, KEY_POWER, 0);
-					input_sync(tpd->dev);
-					/* clear 0x814B*/
-					doze_buf[2] = 0x00;
-					gtp_i2c_write(i2c_client_point, doze_buf, 3);
 
-				} else if (0xC0 == (doze_buf[2] & 0xC0)) {/* double click wakeup*/
-					GTP_INFO("Double click to light up the screen!");
-					doze_status = DOZE_WAKEUP;
-					input_report_key(tpd->dev, KEY_POWER, 1);
-					input_sync(tpd->dev);
-					input_report_key(tpd->dev, KEY_POWER, 0);
-					input_sync(tpd->dev);
-					/* clear 0x814B*/
-					doze_buf[2] = 0x00;
-					gtp_i2c_write(i2c_client_point, doze_buf, 3);
-				} else {
-					gtp_enter_doze(i2c_client_point);
-				}
-			}
-			continue;
-		}
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+
+        if (DOZE_ENABLED == doze_status)
+        {
+            ret = gtp_i2c_read(i2c_client_point, doze_buf, 3);
+            GTP_DEBUG(TAG_GEST "0x814B = 0x%02X", doze_buf[2]);
+            envp = none_wakeup;
+
+            if (ret > 0)
+            {
+                GTP_INFO("[sxb] %s support_gesture is %x\n", __func__, support_gesture);
+                if ((  ((doze_buf[2] == 'c') && (support_gesture & TW_SUPPORT_C_SLIDE_WAKEUP)) ||
+                    ((doze_buf[2] == 'e') && (support_gesture & TW_SUPPORT_E_SLIDE_WAKEUP))  ||
+                    ((doze_buf[2] == 'm') && (support_gesture & TW_SUPPORT_M_SLIDE_WAKEUP)) ||
+                    ((doze_buf[2] == 'o') && (support_gesture & TW_SUPPORT_O_SLIDE_WAKEUP)) ||
+                    ((doze_buf[2] == 'w') && (support_gesture & TW_SUPPORT_W_SLIDE_WAKEUP))
+                ) && smartwake_active == 1)
+                {
+                    GTP_DEBUG(TAG_GEST "Wakeup by gesture(%c), light up the screen!", doze_buf[2]);
+                    doze_status = DOZE_WAKEUP;
+                    if ('c' == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"c");
+                        envp = c_wakeup;
+                    }
+                    else if ('e' == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"e");
+                        envp = e_wakeup;
+                    }
+                    else if ('m' == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"m");
+                        envp = m_wakeup;
+                    }
+                    else if ('o' == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"o");
+                        envp = o_wakeup;
+                    }
+                    else if ('w' == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"w");
+                        envp = w_wakeup;
+                    }
+                }
+                else if (( ((doze_buf[2] == 0xAA) && (support_gesture & TW_SUPPORT_RIGHT_SLIDE_WAKEUP)) ||
+                          ((doze_buf[2] == 0xBB) && (support_gesture & TW_SUPPORT_LEFT_SLIDE_WAKEUP))||
+                          ((doze_buf[2] == 0xAB) && (support_gesture & TW_SUPPORT_DOWN_SLIDE_WAKEUP)) ||
+                          ((doze_buf[2] == 0xBA) && (support_gesture & TW_SUPPORT_UP_SLIDE_WAKEUP)) )
+			&& smartwake_active == 1)
+                {
+                    doze_status = DOZE_WAKEUP;
+
+                    if (0xAA == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"right");
+                        envp = right_wakeup;
+                    }
+                    else if (0xAB == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"down");
+                        envp = down_wakeup;
+                    }
+                    else if (0xBA == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"up");
+                        envp = up_wakeup;
+                    }
+                    else if (0xBB == doze_buf[2])
+                    {
+                        sprintf(wakeup_string_buffer,"left");
+                        envp = left_wakeup;
+                    }
+
+                  GTP_DEBUG(TAG_GEST "%s slide to light up the screen!", *envp);
+                }
+#if GTP_DBL_CLK_WAKEUP
+                else if (0xC0 == (doze_buf[2] & 0xC0) && (support_gesture & TW_SUPPORT_DOUBLE_CLICK_WAKEUP) && smartwake_active == 1 )
+#else
+                else if (0xCC == doze_buf[2] && (support_gesture & TW_SUPPORT_DOUBLE_CLICK_WAKEUP) && smartwake_active == 1)
 #endif
+                {
+                        GTP_DEBUG(TAG_GEST "Double click to light up the screen!");
+                        doze_status = DOZE_WAKEUP;
+                        sprintf(wakeup_string_buffer,"double_click");
+                        envp = doubleClick_wakeup;
+                }
+                else
+                {
+                        // clear 0x814B
+                        doze_buf[2] = 0x00;
+                        gtp_i2c_write(i2c_client_point, doze_buf, 3);
+                        gtp_enter_doze(i2c_client_point);
+                }
+
+                if (DOZE_WAKEUP == doze_status)
+                {
+			input_report_key(tpd->dev, KEY_PROG3, 1);
+			input_sync(tpd->dev);
+			input_report_key(tpd->dev, KEY_PROG3, 0);
+			input_sync(tpd->dev);
+
+                        // clear 0x814B
+                        doze_buf[2] = 0x00;
+                        gtp_i2c_write(i2c_client_point, doze_buf, 3);
+                        gtp_enter_doze(i2c_client_point);
+                }
+            }
+            mutex_unlock(&i2c_access);
+            continue;
+        }
+
+#endif
+
 		if (tpd_halt || (is_resetting == 1) || (load_fw_process == 1)) {
 			GTP_DEBUG("return for interrupt after suspend...  %d, %d, %d", tpd_halt, is_resetting,
 				  load_fw_process);
@@ -2579,7 +2731,10 @@ static int touch_event_handler(void *unused)
 #ifdef CONFIG_HOTKNOT_BLOCK_RW
 			if (!hotknot_paired_flag) {
 #endif
-				enable_irq(touch_irq);
+				if (!irq_enabled) {
+					enable_irq(touch_irq);
+					irq_enabled = true;
+				}
 				mutex_unlock(&i2c_access);
 				GTP_INFO("buffer not ready");
 				continue;
@@ -2772,7 +2927,10 @@ static int touch_event_handler(void *unused)
 			if (ret < 0)
 				GTP_INFO("I2C write end_cmd  error!");
 		}
-		enable_irq(touch_irq);
+		if (!irq_enabled) {
+			enable_irq(touch_irq);
+			irq_enabled = true;
+		}
 		mutex_unlock(&i2c_access);
 
 	} while (!kthread_should_stop());
@@ -2844,7 +3002,8 @@ static int tpd_local_init(void)
 	return 0;
 }
 
-#if (GTP_SCP_GESTURE_WAKEUP || GTP_SLIDE_WAKEUP)
+//#if (GTP_SCP_GESTURE_WAKEUP || GTP_SLIDE_WAKEUP)
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
 
 static s8 gtp_enter_doze(struct i2c_client *client)
 {
@@ -2853,8 +3012,7 @@ static s8 gtp_enter_doze(struct i2c_client *client)
 	u8 i2c_control_buf[3] = { (u8) (GTP_REG_SLEEP >> 8), (u8) GTP_REG_SLEEP, 0x8 };
 
 	GTP_DEBUG_FUNC();
-
-	GTP_DEBUG("entering doze mode...");
+	GTP_DEBUG("%s entering doze mode...\n", __func__);
 
 	/* Enter charger mode*/
 	i2c_control_buf[2] = 0x6;
@@ -3047,16 +3205,20 @@ static s8 gtp_wakeup_sleep(struct i2c_client *client)
 	}
 #endif
 	while (retry++ < 10) {
-#if GTP_SLIDE_WAKEUP
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
 		if (DOZE_WAKEUP != doze_status) {
 			GTP_DEBUG("power wakeup, reset guitar");
 			doze_status = DOZE_DISABLED;
-
-			disable_irq(touch_irq);
-
+			if (irq_enabled) {
+				disable_irq(touch_irq);
+				irq_enabled = false;
+			}
 			gtp_reset_guitar(client, 20);
 
-			enable_irq(touch_irq);
+			if (!irq_enabled) {
+				enable_irq(touch_irq);
+				irq_enabled = true;
+			}
 		} else {
 			GTP_DEBUG("slide(double click) wakeup, no reset guitar");
 			doze_status = DOZE_DISABLED;
@@ -3154,9 +3316,15 @@ void tpd_enter_doze(void)
 			while (release_md32_semaphore(SEMAPHORE_TOUCH) <= 0)
 				GTP_ERROR("GTP release md32 sem failed\n");
 		}
-		disable_irq(touch_irq);
+		if (irq_enabled) {
+			disable_irq(touch_irq);
+			irq_enabled = false;
+		}
 	} else {
-		disable_irq(touch_irq);
+		if (irq_enabled) {
+			disable_irq(touch_irq);
+			irq_enabled = false;
+		}
 		ret = gtp_enter_sleep(i2c_client_point);
 		if (ret < 0)
 			GTP_ERROR("GTP early suspend failed.");
@@ -3169,7 +3337,7 @@ void tpd_enter_doze(void)
 static void tpd_suspend(struct device *h)
 {
 	u8 buf[3] = { 0x81, 0xaa, 0 };
-
+	s32 ret = -1;
 #ifdef TPD_PROXIMITY
 	if (tpd_proximity_flag == 1)
 		return;
@@ -3204,14 +3372,23 @@ static void tpd_suspend(struct device *h)
 
 #if GTP_SCP_GESTURE_WAKEUP
 	tpd_enter_doze();
-#elif GTP_SLIDE_WAKEUP
-	ret = gtp_enter_doze(i2c_client_point);
-#else
-
-	disable_irq(touch_irq);
-	if (gtp_enter_sleep(i2c_client_point) < 0)
-		GTP_ERROR("GTP early suspend failed.");
 #endif
+
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
+	if((support_gesture & TW_SUPPORT_GESTURE_IN_ALL) && smartwake_active == 1) {
+	    ret = gtp_enter_doze(i2c_client_point);
+	}
+	else
+#endif
+	{
+	    if (irq_enabled) {
+		disable_irq(touch_irq);
+		irq_enabled = false;
+	    }
+	    ret = gtp_enter_sleep(i2c_client_point);
+	    if (ret < 0)
+		GTP_ERROR("GTP early suspend failed.");
+	}
 	mutex_unlock(&i2c_access);
 
 	msleep(58);
@@ -3228,6 +3405,9 @@ static void tpd_resume(struct device *h)
 	if (tpd_proximity_flag == 1)
 		return;
 #endif
+	/* workaround unresponsive touch */
+	disable_irq_nosync(touch_irq);
+	irq_enabled = false;
 
 #if GTP_SCP_GESTURE_WAKEUP
 	if (tpd_scp_doze_en) {
@@ -3265,26 +3445,20 @@ static void tpd_resume(struct device *h)
 		gtp_charger_switch(1);	/* force update*/
 #endif
 
-#if GTP_SLIDE_WAKEUP
+#if defined(CONFIG_GTP_SLIDE_WAKEUP)
 	doze_status = DOZE_DISABLED;
-#elif (GTP_SCP_GESTURE_WAKEUP)
-	doze_status = DOZE_DISABLED;
-	tpd_halt = 0;
-
-	ret = request_irq(touch_irq, (irq_handler_t) tpd_eint_interrupt_handler,
-		gtp_eint_trigger_type, "touch-eint", NULL);
-	enable_irq(touch_irq);
-#else
-
+#endif
 	mutex_lock(&i2c_access);
 	tpd_halt = 0;
 	/*set again for IPO-H resume*/
-
+/*
 	ret = request_irq(touch_irq, (irq_handler_t) tpd_eint_interrupt_handler,
-		gtp_eint_trigger_type, "touch-eint", NULL);
-	enable_irq(touch_irq);
+		gtp_eint_trigger_type, "touch-eint", NULL);*/
+	if (!irq_enabled) {
+		enable_irq(touch_irq);
+		irq_enabled = true;
+	}
 	mutex_unlock(&i2c_access);
-#endif
 
 #if GTP_ESD_PROTECT
 	queue_delayed_work(gtp_esd_check_workqueue, &gtp_esd_check_work, clk_tick_cnt);
@@ -3323,7 +3497,10 @@ static void tpd_off(void)
 
 	tpd_halt = 1;
 
-	disable_irq(touch_irq);
+	if (irq_enabled) {
+		disable_irq(touch_irq);
+		irq_enabled = false;
+	}
 }
 
 static void tpd_on(void)
@@ -3342,7 +3519,10 @@ static void tpd_on(void)
 	}
 	if (ret < 0)
 		GTP_ERROR("GTP later resume failed.");
-	enable_irq(touch_irq);
+	if (!irq_enabled) {
+		enable_irq(touch_irq);
+		irq_enabled = true;
+	}
 	tpd_halt = 0;
 }
 
