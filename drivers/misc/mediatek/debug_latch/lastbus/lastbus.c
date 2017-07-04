@@ -239,18 +239,6 @@ static ssize_t lastbus_test_show(struct device_driver *driver, char *buf)
 
 static ssize_t lastbus_test_store(struct device_driver *driver, const char *buf, size_t count)
 {
-	struct lastbus_plt *plt = lastbus_drv.cur_plt;
-	char *p = (char *)buf;
-	unsigned long num = 0;
-
-	if (kstrtoul(p, 10, &num) != 0) {
-		pr_err("%s:%d: kstrtoul fail for %s\n", __func__, __LINE__, p);
-		return 0;
-	}
-
-	if (plt && plt->ops && (plt->ops->test(plt, num) != 0))
-		pr_err("%s:%d: test failed\n", __func__, __LINE__);
-
 	return count;
 }
 
