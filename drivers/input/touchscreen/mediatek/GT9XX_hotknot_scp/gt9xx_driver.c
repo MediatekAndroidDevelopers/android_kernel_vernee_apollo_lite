@@ -96,7 +96,7 @@ enum support_gesture_e {
 u32 support_gesture = TW_SUPPORT_GESTURE_IN_ALL;/*TW_SUPPORT_NONE_SLIDE_WAKEUP;*/
 static char wakeup_string_buffer[32] = {};
 
-static int smartwake_active = 1;
+static int smartwake_active = 0;
 
 #endif
 
@@ -3375,7 +3375,7 @@ static void tpd_suspend(struct device *h)
 #endif
 
 #if defined(CONFIG_GTP_SLIDE_WAKEUP)
-	if((support_gesture & TW_SUPPORT_GESTURE_IN_ALL) && smartwake_active == 1) {
+	if((support_gesture & TW_SUPPORT_GESTURE_IN_ALL) /*&& smartwake_active == 1*/) {
 	    ret = gtp_enter_doze(i2c_client_point);
 	}
 	else
