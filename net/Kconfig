@@ -76,12 +76,36 @@ config INET
 
 	  Short answer: say Y.
 
+config MTK_VOLTE_SUPPORT
+	  bool
+	  default n
+	  depends on !CRYPTO_NULL
+	  help
+	      dummy option for dependency check.if MTK_VOLTE_SUPPORT is set,
+	      CRYPTO_NULL is not set, build error will happen. only CRYPTO_NULL
+	      is set, build error will be fixed; when MTK_VOLTE_SUPPORT is not
+	      set, there is no error whatever CRYPTO_NULL is set or not set
+
 if INET
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
 source "net/netlabel/Kconfig"
 
 endif # if INET
+
+config ANDROID_PARANOID_NETWORK
+	bool "Only allow certain groups to create sockets"
+	default y
+	help
+		none
+
+config NET_ACTIVITY_STATS
+	bool "Network activity statistics tracking"
+	default y
+	help
+	 Network activity statistics are useful for tracking wireless
+	 modem activity on 2G, 3G, 4G wireless networks. Counts number of
+	 transmissions and groups them in specified time buckets.
 
 config NETWORK_SECMARK
 	bool "Security Marking"
@@ -230,7 +254,7 @@ source "net/mpls/Kconfig"
 source "net/hsr/Kconfig"
 
 config RPS
-	boolean
+	boolean "RPS"
 	depends on SMP && SYSFS
 	default y
 
@@ -376,3 +400,8 @@ endif   # if NET
 # Used by archs to tell that they support BPF_JIT
 config HAVE_BPF_JIT
 	bool
+
+#ADD NetWorking Log
+config MTK_NET_LOGGING
+  bool "Networking log"
+  default n

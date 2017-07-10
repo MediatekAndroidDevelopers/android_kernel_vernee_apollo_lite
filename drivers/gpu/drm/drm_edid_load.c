@@ -216,7 +216,8 @@ static void *edid_load(struct drm_connector *connector, const char *name,
 		goto out;
 	}
 
-	if (!drm_edid_block_valid(edid, 0, print_bad_edid)) {
+	if (!drm_edid_block_valid(edid, 0, print_bad_edid,
+				  &connector->edid_corrupt)) {
 		connector->bad_edid_counter++;
 		DRM_ERROR("Base block of EDID firmware \"%s\" is invalid ",
 		    name);
@@ -229,7 +230,9 @@ static void *edid_load(struct drm_connector *connector, const char *name,
 		if (i != valid_extensions + 1)
 			memcpy(edid + (valid_extensions + 1) * EDID_LENGTH,
 			    edid + i * EDID_LENGTH, EDID_LENGTH);
-		if (drm_edid_block_valid(edid + i * EDID_LENGTH, i, print_bad_edid))
+		if (drm_edid_block_valid(edid + i * EDID_LENGTH, i,
+					 print_bad_edid,
+					 NULL))
 			valid_extensions++;
 	}
 
@@ -254,8 +257,7 @@ static void *edid_load(struct drm_connector *connector, const char *name,
 	    name, connector_name);
 
 out:
-	if (fw)
-		release_firmware(fw);
+	release_firmware(fw);
 	return edid;
 }
 
@@ -288,7 +290,6 @@ int drm_load_edid_firmware(struct drm_connector *connector)
 
 	drm_mode_connector_update_edid_property(connector, edid);
 	ret = drm_add_edid_modes(connector, edid);
-	drm_edid_to_eld(connector, edid);
 	kfree(edid);
 
 	return ret;

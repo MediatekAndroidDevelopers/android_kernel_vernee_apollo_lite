@@ -45,6 +45,11 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/spi.h>
+#if defined(CONFIG_ARCH_MT6797)
+#include <mt_chip.h>
+#include <mt_vcorefs_manager.h>
+bool spi_dvfs_flag = 0;
+#endif
 
 static void spidev_release(struct device *dev)
 {
@@ -658,8 +663,15 @@ static int __spi_map_msg(struct spi_master *master, struct spi_message *msg)
 	if (!master->can_dma)
 		return 0;
 
-	tx_dev = master->dma_tx->device->dev;
-	rx_dev = master->dma_rx->device->dev;
+	if (master->dma_tx)
+		tx_dev = master->dma_tx->device->dev;
+	else
+		tx_dev = &master->dev;
+
+	if (master->dma_rx)
+		rx_dev = master->dma_rx->device->dev;
+	else
+		rx_dev = &master->dev;
 
 	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
 		if (!master->can_dma(master, msg->spi, xfer))
@@ -698,8 +710,15 @@ static int spi_unmap_msg(struct spi_master *master, struct spi_message *msg)
 	if (!master->cur_msg_mapped || !master->can_dma)
 		return 0;
 
-	tx_dev = master->dma_tx->device->dev;
-	rx_dev = master->dma_rx->device->dev;
+	if (master->dma_tx)
+		tx_dev = master->dma_tx->device->dev;
+	else
+		tx_dev = &master->dev;
+
+	if (master->dma_rx)
+		rx_dev = master->dma_rx->device->dev;
+	else
+		rx_dev = &master->dev;
 
 	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
 		if (!master->can_dma(master, msg->spi, xfer))
@@ -2104,7 +2123,10 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message,
 
 	message->complete = spi_complete;
 	message->context = &done;
-
+#if defined(CONFIG_ARCH_MT6797)
+	if ((master->bus_num == 1) && (spi_dvfs_flag))
+		vcorefs_request_dvfs_opp(KIR_REESPI, OPPI_PERF);
+#endif
 	if (!bus_locked)
 		mutex_lock(&master->bus_lock_mutex);
 
@@ -2118,6 +2140,10 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message,
 		status = message->status;
 	}
 	message->context = NULL;
+#if defined(CONFIG_ARCH_MT6797)
+	if ((master->bus_num == 1) && (spi_dvfs_flag))
+		vcorefs_request_dvfs_opp(KIR_REESPI, OPPI_UNREQ);
+#endif
 	return status;
 }
 
@@ -2307,7 +2333,16 @@ EXPORT_SYMBOL_GPL(spi_write_then_read);
 static int __init spi_init(void)
 {
 	int	status;
+#if defined(CONFIG_ARCH_MT6797)
+	int ver;
 
+	ver = mt_get_chip_hw_ver();
+
+	if (0xCA01 == ver)
+		spi_dvfs_flag = 0;
+	else
+		spi_dvfs_flag = 1;
+#endif
 	buf = kmalloc(SPI_BUFSIZ, GFP_KERNEL);
 	if (!buf) {
 		status = -ENOMEM;

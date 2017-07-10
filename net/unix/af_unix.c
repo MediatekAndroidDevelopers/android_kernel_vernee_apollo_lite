@@ -479,7 +479,9 @@ static void unix_sock_destructor(struct sock *sk)
 	WARN_ON(!sk_unhashed(sk));
 	WARN_ON(sk->sk_socket);
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		pr_info("Attempt to release alive unix socket: %p\n", sk);
+		 #ifdef CONFIG_MTK_NET_LOGGING
+		pr_debug("[mtk_net][unix]Attempt to release alive unix socket: %p\n", sk);
+		#endif
 		return;
 	}
 
@@ -491,8 +493,7 @@ static void unix_sock_destructor(struct sock *sk)
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
 	local_bh_enable();
 #ifdef UNIX_REFCNT_DEBUG
-	pr_debug("UNIX %p is destroyed, %ld are still alive.\n", sk,
-		atomic_long_read(&unix_nr_socks));
+	pr_debug("[mtk_net][unix]UNIX %p is destroyed, %ld are still alive.\n", sk, atomic_long_read(&unix_nr_socks));
 #endif
 }
 
@@ -1160,6 +1161,17 @@ restart:
 		unix_peer(sk) = other;
 		unix_state_double_unlock(sk, other);
 	}
+
+#ifdef CONFIG_MTK_NET_LOGGING
+	if ((SOCK_INODE(sock) != NULL) && (sunaddr != NULL) && (other != NULL) && (other->sk_socket != NULL) &&
+	     (SOCK_INODE(other->sk_socket) != NULL)) {
+		if (!strstr(sunaddr->sun_path, "logdw")) {
+			pr_info("[mtk_net][socket]unix_dgram_connect[%lu]:connect [%s] other:[%lu]\n",
+				SOCK_INODE(sock)->i_ino, sunaddr->sun_path, SOCK_INODE(other->sk_socket)->i_ino);
+		}
+	}
+#endif
+
 	return 0;
 
 out_unlock:
@@ -1169,11 +1181,45 @@ out:
 	return err;
 }
 
+#ifdef CONFIG_MTK_NET_LOGGING
+struct wait_for_peer_info_t {
+	char *process;
+	int pid;
+	unsigned long long when;
+};
+
+static void print_wait_peer_sock_info(unsigned long data)
+{
+	struct wait_for_peer_info_t *wait_info = (struct wait_for_peer_info_t *)data;
+	unsigned long long time = jiffies - wait_info->when;
+
+	/*Compatible 32bit projet and 64 bit project*/
+	do_div(time, HZ);
+	pr_info("----------------------wait for peer block info-----------------------\n");
+	pr_info("[mtk_net][sock]sockdbg %s[%d] is blocking because wait for peer more than %lld sec\n",
+		wait_info->process, wait_info->pid, time);
+}
+#endif
+
 static long unix_wait_for_peer(struct sock *other, long timeo)
 {
 	struct unix_sock *u = unix_sk(other);
 	int sched;
 	DEFINE_WAIT(wait);
+
+#ifdef CONFIG_MTK_NET_LOGGING
+	struct timer_list wait_peer_timer;
+	struct wait_for_peer_info_t wait_sk_info;
+
+	wait_sk_info.pid = current->pid;
+	wait_sk_info.process = current->comm;
+	wait_sk_info.when = jiffies;
+	init_timer(&wait_peer_timer);
+	wait_peer_timer.function = print_wait_peer_sock_info;
+	wait_peer_timer.expires = jiffies + 10*HZ;
+	wait_peer_timer.data = (unsigned long)&wait_sk_info;
+	add_timer(&wait_peer_timer);
+#endif
 
 	prepare_to_wait_exclusive(&u->peer_wait, &wait, TASK_INTERRUPTIBLE);
 
@@ -1187,6 +1233,10 @@ static long unix_wait_for_peer(struct sock *other, long timeo)
 		timeo = schedule_timeout(timeo);
 
 	finish_wait(&u->peer_wait, &wait);
+#ifdef CONFIG_MTK_NET_LOGGING
+	del_timer(&wait_peer_timer);
+#endif
+
 	return timeo;
 }
 
@@ -1348,6 +1398,20 @@ restart:
 	__skb_queue_tail(&other->sk_receive_queue, skb);
 	spin_unlock(&other->sk_receive_queue.lock);
 	unix_state_unlock(other);
+
+#ifdef CONFIG_MTK_NET_LOGGING
+	if ((SOCK_INODE(sock) != NULL) && (sunaddr != NULL) && (other->sk_socket != NULL) &&
+		(SOCK_INODE(other->sk_socket) != NULL)) {
+			unsigned long sk_ino = SOCK_INODE(sock)->i_ino;
+			unsigned long other_ino = SOCK_INODE(other->sk_socket)->i_ino;
+
+			if (!strstr(sunaddr->sun_path, "property_service") && !strstr(sunaddr->sun_path, "fwmarkd")) {
+				pr_info("[mtk_net][socket]unix_stream_connect[%lu ]: connect [%s] other[%lu]\n",
+					sk_ino, sunaddr->sun_path, other_ino);
+			}
+	}
+#endif
+
 	other->sk_data_ready(other);
 	sock_put(other);
 	return 0;
@@ -1736,7 +1800,12 @@ restart_locked:
 			goto out_unlock;
 	}
 
-	if (unlikely(unix_peer(other) != sk && unix_recvq_full(other))) {
+	/* other == sk && unix_peer(other) != sk if
+	 * - unix_peer(sk) == NULL, destination address bound to sk
+	 * - unix_peer(sk) == sk by time of get but disconnected before lock
+	 */
+	if (other != sk &&
+	    unlikely(unix_peer(other) != sk && unix_recvq_full(other))) {
 		if (timeo) {
 			timeo = unix_wait_for_peer(other, timeo);
 
@@ -1877,8 +1946,28 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 		unix_state_lock(other);
 
 		if (sock_flag(other, SOCK_DEAD) ||
-		    (other->sk_shutdown & RCV_SHUTDOWN))
+			(other->sk_shutdown & RCV_SHUTDOWN)) {
+			if (other->sk_socket) {
+				if (sk->sk_socket) {
+#ifdef CONFIG_MTK_NET_LOGGING
+					pr_debug(" [mtk_net][unix]: sendmsg[%lu:%lu]:peer close\n",
+						 SOCK_INODE(sk->sk_socket)->i_ino,
+						 SOCK_INODE(other->sk_socket)->i_ino);
+#endif
+				} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+					pr_debug(" [mtk_net][unix]: sendmsg[null:%lu]:peer close\n",
+						 SOCK_INODE(other->sk_socket)->i_ino);
+#endif
+				}
+
+			} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+				pr_debug("[mtk_net][unix]: sendmsg:peer close\n");
+#endif
+			}
 			goto pipe_err_free;
+		}
 
 		maybe_add_creds(skb, sock, other);
 		skb_queue_tail(&other->sk_receive_queue, skb);
@@ -2105,7 +2194,7 @@ static int unix_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
 	int err = 0;
 	long timeo;
 	int skip;
-
+	struct sock *other  = unix_peer(sk);
 	err = -EINVAL;
 	if (sk->sk_state != TCP_ESTABLISHED)
 		goto out;
@@ -2156,9 +2245,31 @@ again:
 			err = sock_error(sk);
 			if (err)
 				goto unlock;
-			if (sk->sk_shutdown & RCV_SHUTDOWN)
-				goto unlock;
+			if (sk->sk_shutdown & RCV_SHUTDOWN) {
+				if (sk && sk->sk_socket) {
+					if (other && other->sk_socket) {
+#ifdef CONFIG_MTK_NET_LOGGING
+						unsigned long sk_ino = SOCK_INODE(sk->sk_socket)->i_ino;
+						unsigned long other_ino = SOCK_INODE(other->sk_socket)->i_ino;
 
+						pr_debug(" [mtk_net][unix]: recvmsg[%lu:%lu]:exit read due to peer shutdown\n",
+							 sk_ino, other_ino);
+#endif
+					} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+						unsigned long sk_ino = SOCK_INODE(sk->sk_socket)->i_ino;
+
+						pr_debug("[mtk_net][unix]: recvmsg[%lu:null]:exit read due to peer shutdown\n",
+							 sk_ino);
+#endif
+					}
+				} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+					pr_debug("[mtk_net][unix]: recvmsg: exit read due to peer shutdown\n");
+#endif
+				}
+				goto unlock;
+			}
 			unix_state_unlock(sk);
 			err = -EAGAIN;
 			if (!timeo)
@@ -2166,7 +2277,29 @@ again:
 			mutex_unlock(&u->readlock);
 
 			timeo = unix_stream_data_wait(sk, timeo, last);
+			if (!timeo) {
+				if (sk && sk->sk_socket) {
+					if (other && other->sk_socket) {
+#ifdef CONFIG_MTK_NET_LOGGING
+						unsigned long other_ino = SOCK_INODE(other->sk_socket)->i_ino;
+						unsigned long sk_ino = SOCK_INODE(sk->sk_socket)->i_ino;
 
+			pr_debug("[mtk_net][unix]: recvmsg[%lu:%lu]:exit read due to timeout\n", sk_ino, other_ino);
+#endif
+					} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+
+			unsigned long sk_ino = SOCK_INODE(sk->sk_socket)->i_ino;
+
+			pr_debug("[mtk_net][unix]: recvmsg[%lu:null]:exit read due to timeout\n", sk_ino);
+#endif
+					}
+				} else {
+#ifdef CONFIG_MTK_NET_LOGGING
+					pr_debug("[mtk_net][unix]: recvmsg:exit read due to timeout\n");
+#endif
+				}
+			}
 			if (signal_pending(current)) {
 				err = sock_intr_errno(timeo);
 				goto out;
@@ -2533,6 +2666,85 @@ static void unix_seq_stop(struct seq_file *seq, void *v)
 	spin_unlock(&unix_table_lock);
 }
 
+#ifdef CONFIG_MTK_NET_LOGGING
+static int unix_seq_show(struct seq_file *seq, void *v)
+{
+	if (v == SEQ_START_TOKEN)
+		seq_puts(seq,
+			 "Num       RefCount Protocol Flags    Type St    Inode PeerNode Path  PeerPath\n");
+	else {
+		struct sock *s = v;
+		struct unix_sock *u = unix_sk(s);
+
+		unix_state_lock(s);
+		if (u->peer != NULL) {
+			seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu %5lu",
+				   s,
+				   atomic_read(&s->sk_refcnt),
+				   0,
+				   s->sk_state == TCP_LISTEN ? __SO_ACCEPTCON : 0,
+				   s->sk_type,
+				   s->sk_socket ?
+				   (s->sk_state == TCP_ESTABLISHED ? SS_CONNECTED : SS_UNCONNECTED) :
+				   (s->sk_state == TCP_ESTABLISHED ? SS_CONNECTING : SS_DISCONNECTING),
+				   sock_i_ino(s),
+				   sock_i_ino(u->peer));
+		} else {
+			seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu %d",
+				   s,
+				   atomic_read(&s->sk_refcnt),
+				   0,
+				   s->sk_state == TCP_LISTEN ? __SO_ACCEPTCON : 0,
+				   s->sk_type,
+				   s->sk_socket ?
+				   (s->sk_state == TCP_ESTABLISHED ? SS_CONNECTED : SS_UNCONNECTED) :
+				   (s->sk_state == TCP_ESTABLISHED ? SS_CONNECTING : SS_DISCONNECTING),
+				   sock_i_ino(s),
+				   0);
+			}
+			if (u->addr) {
+				int i, len;
+
+				seq_putc(seq, ' ');
+				i = 0;
+				len = u->addr->len - sizeof(short);
+				if (!UNIX_ABSTRACT(s)) {
+					len--;
+				} else {
+					seq_putc(seq, '@');
+					i++;
+				}
+				for ( ; i < len; i++)
+					seq_putc(seq, u->addr->name->sun_path[i]);
+			}
+
+			if (u->peer != NULL) {
+				struct unix_sock *pu = unix_sk(u->peer);
+
+				if (pu->addr) {
+					int a, length;
+
+					seq_putc(seq, ' ');
+					seq_putc(seq, '*');
+					a = 0;
+					length = pu->addr->len - sizeof(short);
+					if (!UNIX_ABSTRACT(u->peer)) {
+							length--;
+					} else {
+							seq_putc(seq, '@');
+							a++;
+				}
+				for ( ; a < length; a++)
+						seq_putc(seq, pu->addr->name->sun_path[a]);
+				}
+}
+
+			unix_state_unlock(s);
+			seq_putc(seq, '\n');
+		}
+		return 0;
+}
+#else
 static int unix_seq_show(struct seq_file *seq, void *v)
 {
 
@@ -2576,6 +2788,7 @@ static int unix_seq_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
+#endif
 
 static const struct seq_operations unix_seq_ops = {
 	.start  = unix_seq_start,
@@ -2645,7 +2858,7 @@ static int __init af_unix_init(void)
 
 	rc = proto_register(&unix_proto, 1);
 	if (rc != 0) {
-		pr_crit("%s: Cannot create unix_sock SLAB cache!\n", __func__);
+		pr_debug("%s: Cannot create unix_sock SLAB cache!\n", __func__);
 		goto out;
 	}
 

@@ -2,6 +2,8 @@
 # Makefile for the WatchDog device drivers.
 #
 
+subdir-ccflags-y += -Werror
+
 # The WatchDog Timer Driver Core.
 watchdog-objs	+= watchdog_core.o watchdog_dev.o
 obj-$(CONFIG_WATCHDOG_CORE)	+= watchdog.o
@@ -63,6 +65,8 @@ obj-$(CONFIG_QCOM_WDT) += qcom-wdt.o
 obj-$(CONFIG_BCM_KONA_WDT) += bcm_kona_wdt.o
 obj-$(CONFIG_TEGRA_WATCHDOG) += tegra_wdt.o
 obj-$(CONFIG_MESON_WATCHDOG) += meson_wdt.o
+obj-$(CONFIG_MEDIATEK_WATCHDOG) += mtk_wdt.o
+obj-$(CONFIG_MEDIATEK_WATCHDOG) += mediatek/wdk/
 
 # AVR32 Architecture
 obj-$(CONFIG_AT32AP700X_WDT) += at32ap700x_wdt.o
@@ -184,3 +188,11 @@ obj-$(CONFIG_WM8350_WATCHDOG) += wm8350_wdt.o
 obj-$(CONFIG_MAX63XX_WATCHDOG) += max63xx_wdt.o
 obj-$(CONFIG_SOFT_WATCHDOG) += softdog.o
 obj-$(CONFIG_MENF21BMC_WATCHDOG) += menf21bmc_wdt.o
+
+# mediatek
+ifeq ($(CONFIG_MEDIATEK_WATCHDOG), y)
+subdir-ccflags-y += -Werror -I$(srctree)/drivers/misc/mediatek/include/
+subdir-ccflags-y += -Werror -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include
+else
+obj-$(CONFIG_MEDIATEK_SOLUTION) += mediatek/
+endif

@@ -5,9 +5,9 @@
   This program can be distributed under the terms of the GNU GPL.
   See the file COPYING.
 */
-
+#define DEBUG 1
 #include "fuse_i.h"
-
+#include "mt_fuse.h"
 #include <linux/pagemap.h>
 #include <linux/slab.h>
 #include <linux/file.h>
@@ -948,7 +948,9 @@ static void fuse_send_init(struct fuse_conn *fc, struct fuse_req *req)
 	req->out.args[0].size = sizeof(struct fuse_init_out);
 	req->out.args[0].value = &req->misc.init_out;
 	req->end = process_init_reply;
+	pr_info("FUSE_INIT: fuse_request_send_background() enter\n");
 	fuse_request_send_background(fc, req);
+	pr_info("FUSE_INIT: fuse_request_send_background() exit\n");
 }
 
 static void fuse_free_conn(struct fuse_conn *fc)
@@ -1008,6 +1010,8 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	struct fuse_req *init_req;
 	int err;
 	int is_bdev = sb->s_bdev != NULL;
+
+	pr_info("FUSE_INIT: fuse_fill_super() enter\n");
 
 	err = -EINVAL;
 	if (sb->s_flags & MS_MANDLOCK)
@@ -1112,7 +1116,9 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	 */
 	fput(file);
 
+	pr_info("FUSE_INIT: fuse_send_init() enter\n");
 	fuse_send_init(fc, init_req);
+	pr_info("FUSE_INIT: fuse_send_init() exit\n");
 
 	return 0;
 
@@ -1319,7 +1325,7 @@ static int __init fuse_init(void)
 
 	sanitize_global_limit(&max_user_bgreq);
 	sanitize_global_limit(&max_user_congthresh);
-
+	fuse_iolog_init();
 	return 0;
 
  err_sysfs_cleanup:
@@ -1340,6 +1346,7 @@ static void __exit fuse_exit(void)
 	fuse_sysfs_cleanup();
 	fuse_fs_cleanup();
 	fuse_dev_cleanup();
+	fuse_iolog_exit();
 }
 
 module_init(fuse_init);

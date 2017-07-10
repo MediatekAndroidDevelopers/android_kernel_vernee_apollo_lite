@@ -277,6 +277,50 @@ invalid:
 	goto out;
 }
 
+/*
+ * Get the canonical path. Since we must translate to a path, this must be done
+ * in the context of the userspace daemon, however, the userspace daemon cannot
+ * look up paths on its own. Instead, we handle the lookup as a special case
+ * inside of the write request.
+ */
+static void fuse_dentry_canonical_path(const struct path *path, struct path *canonical_path) {
+	struct inode *inode = path->dentry->d_inode;
+	struct fuse_conn *fc = get_fuse_conn(inode);
+	struct fuse_req *req;
+	int err;
+	char *path_name;
+
+	req = fuse_get_req(fc, 1);
+	err = PTR_ERR(req);
+	if (IS_ERR(req))
+		goto default_path;
+
+	path_name = (char*)__get_free_page(GFP_KERNEL);
+	if (!path_name) {
+		fuse_put_request(fc, req);
+		goto default_path;
+	}
+
+	req->in.h.opcode = FUSE_CANONICAL_PATH;
+	req->in.h.nodeid = get_node_id(inode);
+	req->in.numargs = 0;
+	req->out.numargs = 1;
+	req->out.args[0].size = PATH_MAX;
+	req->out.args[0].value = path_name;
+	req->canonical_path = canonical_path;
+	req->out.argvar = 1;
+	fuse_request_send(fc, req);
+	err = req->out.h.error;
+	fuse_put_request(fc, req);
+	free_page((unsigned long)path_name);
+	if (!err)
+		return;
+default_path:
+	canonical_path->dentry = path->dentry;
+	canonical_path->mnt = path->mnt;
+	path_get(canonical_path);
+}
+
 static int invalid_nodeid(u64 nodeid)
 {
 	return !nodeid || nodeid == FUSE_ROOT_ID;
@@ -284,6 +328,7 @@ static int invalid_nodeid(u64 nodeid)
 
 const struct dentry_operations fuse_dentry_operations = {
 	.d_revalidate	= fuse_dentry_revalidate,
+	.d_canonical_path = fuse_dentry_canonical_path,
 };
 
 int fuse_valid_type(int m)
@@ -1002,35 +1047,8 @@ int fuse_update_attributes(struct inode *inode, struct kstat *stat,
 	return err;
 }
 
-int fuse_reverse_inval_entry(struct super_block *sb, u64 parent_nodeid,
-			     u64 child_nodeid, struct qstr *name)
+int fuse_reverse_inval_entry_child(int err, struct dentry *entry, u64 child_nodeid)
 {
-	int err = -ENOTDIR;
-	struct inode *parent;
-	struct dentry *dir;
-	struct dentry *entry;
-
-	parent = ilookup5(sb, parent_nodeid, fuse_inode_eq, &parent_nodeid);
-	if (!parent)
-		return -ENOENT;
-
-	mutex_lock(&parent->i_mutex);
-	if (!S_ISDIR(parent->i_mode))
-		goto unlock;
-
-	err = -ENOENT;
-	dir = d_find_alias(parent);
-	if (!dir)
-		goto unlock;
-
-	entry = d_lookup(dir, name);
-	dput(dir);
-	if (!entry)
-		goto unlock;
-
-	fuse_invalidate_attr(parent);
-	fuse_invalidate_entry(entry);
-
 	if (child_nodeid != 0 && entry->d_inode) {
 		mutex_lock(&entry->d_inode->i_mutex);
 		if (get_node_id(entry->d_inode) != child_nodeid) {
@@ -1060,9 +1078,43 @@ int fuse_reverse_inval_entry(struct super_block *sb, u64 parent_nodeid,
 		err = 0;
 	}
 	dput(entry);
+	return err;
+}
 
+int fuse_reverse_inval_entry(struct super_block *sb, u64 parent_nodeid,
+			     u64 child_nodeid, struct qstr *name)
+{
+	int err = -ENOTDIR;
+	struct inode *parent;
+	struct dentry *dir;
+	struct dentry *entry;
+
+	parent = ilookup5(sb, parent_nodeid, fuse_inode_eq, &parent_nodeid);
+	if (!parent)
+		return -ENOENT;
+
+	lockdep_off();
+	mutex_lock(&parent->i_mutex);
+	if (!S_ISDIR(parent->i_mode))
+		goto unlock;
+
+	err = -ENOENT;
+	dir = d_find_alias(parent);
+	if (!dir)
+		goto unlock;
+
+	entry = d_lookup(dir, name);
+	dput(dir);
+	if (!entry)
+		goto unlock;
+
+	fuse_invalidate_attr(parent);
+	fuse_invalidate_entry(entry);
+
+	err = fuse_reverse_inval_entry_child(err, entry, child_nodeid);
  unlock:
 	mutex_unlock(&parent->i_mutex);
+	lockdep_on();
 	iput(parent);
 	return err;
 }

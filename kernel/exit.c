@@ -53,7 +53,9 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
-
+#ifdef CONFIG_MTPROF
+#include "mt_cputime.h"
+#endif
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
@@ -671,7 +673,12 @@ void do_exit(long code)
 	TASKS_RCU(int tasks_rcu_i);
 
 	profile_task_exit(tsk);
-
+#ifdef CONFIG_MTPROF
+#ifdef CONFIG_MTPROF_CPUTIME
+	/* mt shceduler profiling*/
+	end_mtproc_info(tsk);
+#endif
+#endif
 	WARN_ON(blk_needs_flush_plug(tsk));
 
 	if (unlikely(in_interrupt()))

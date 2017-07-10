@@ -505,6 +505,17 @@ config MESON_WATCHDOG
 	  To compile this driver as a module, choose M here: the
 	  module will be called meson_wdt.
 
+config MEDIATEK_WATCHDOG
+	tristate "Mediatek SoCs watchdog support"
+	depends on ARCH_MEDIATEK
+	select WATCHDOG_CORE
+	select RESET_CONTROLLER
+	help
+	  Say Y here to include support for the watchdog timer
+	  in Mediatek SoCs.
+	  To compile this driver as a module, choose M here: the
+	  module will be called mtk_wdt.
+
 # AVR32 Architecture
 
 config AT32AP700X_WDT
@@ -1529,3 +1540,6 @@ config USBPCWATCHDOG
 	  Most people will say N.
 
 endif # WATCHDOG
+
+#mediatek
+source "drivers/watchdog/mediatek/Kconfig"

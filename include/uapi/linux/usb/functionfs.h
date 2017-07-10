@@ -87,89 +87,24 @@ struct usb_ext_prop_desc {
  *
  * | off | name      | type         | description                          |
  * |-----+-----------+--------------+--------------------------------------|
- * |   0 | magic     | LE32         | FUNCTIONFS_DESCRIPTORS_MAGIC_V2      |
- * |   4 | length    | LE32         | length of the whole data chunk       |
- * |   8 | flags     | LE32         | combination of functionfs_flags      |
- * |     | fs_count  | LE32         | number of full-speed descriptors     |
- * |     | hs_count  | LE32         | number of high-speed descriptors     |
- * |     | ss_count  | LE32         | number of super-speed descriptors    |
- * |     | os_count  | LE32         | number of MS OS descriptors          |
- * |     | fs_descrs | Descriptor[] | list of full-speed descriptors       |
- * |     | hs_descrs | Descriptor[] | list of high-speed descriptors       |
- * |     | ss_descrs | Descriptor[] | list of super-speed descriptors      |
- * |     | os_descrs | OSDesc[]     | list of MS OS descriptors            |
- *
- * Depending on which flags are set, various fields may be missing in the
- * structure.  Any flags that are not recognised cause the whole block to be
- * rejected with -ENOSYS.
- *
- * Legacy descriptors format (deprecated as of 3.14):
- *
- * | off | name      | type         | description                          |
- * |-----+-----------+--------------+--------------------------------------|
- * |   0 | magic     | LE32         | FUNCTIONFS_DESCRIPTORS_MAGIC         |
+ * |   0 | magic     | LE32         | FUNCTIONFS_{FS,HS}_DESCRIPTORS_MAGIC |
  * |   4 | length    | LE32         | length of the whole data chunk       |
  * |   8 | fs_count  | LE32         | number of full-speed descriptors     |
  * |  12 | hs_count  | LE32         | number of high-speed descriptors     |
  * |  16 | fs_descrs | Descriptor[] | list of full-speed descriptors       |
  * |     | hs_descrs | Descriptor[] | list of high-speed descriptors       |
+ * |     | ss_magic  | LE32         | FUNCTIONFS_SS_DESC_MAGIC             |
+ * |     | ss_count  | LE32         | number of super-speed descriptors    |
+ * |     | ss_descrs | Descriptor[] | list of super-speed descriptors      |
  *
- * All numbers must be in little endian order.
- *
- * Descriptor[] is an array of valid USB descriptors which have the following
- * format:
+ * ss_magic: if present then it implies that SS_DESCs are also present
+ * descs are just valid USB descriptors and have the following format:
  *
  * | off | name            | type | description              |
  * |-----+-----------------+------+--------------------------|
  * |   0 | bLength         | U8   | length of the descriptor |
  * |   1 | bDescriptorType | U8   | descriptor type          |
  * |   2 | payload         |      | descriptor's payload     |
- *
- * OSDesc[] is an array of valid MS OS Feature Descriptors which have one of
- * the following formats:
- *
- * | off | name            | type | description              |
- * |-----+-----------------+------+--------------------------|
- * |   0 | inteface        | U8   | related interface number |
- * |   1 | dwLength        | U32  | length of the descriptor |
- * |   5 | bcdVersion      | U16  | currently supported: 1   |
- * |   7 | wIndex          | U16  | currently supported: 4   |
- * |   9 | bCount          | U8   | number of ext. compat.   |
- * |  10 | Reserved        | U8   | 0                        |
- * |  11 | ExtCompat[]     |      | list of ext. compat. d.  |
- *
- * | off | name            | type | description              |
- * |-----+-----------------+------+--------------------------|
- * |   0 | inteface        | U8   | related interface number |
- * |   1 | dwLength        | U32  | length of the descriptor |
- * |   5 | bcdVersion      | U16  | currently supported: 1   |
- * |   7 | wIndex          | U16  | currently supported: 5   |
- * |   9 | wCount          | U16  | number of ext. compat.   |
- * |  11 | ExtProp[]       |      | list of ext. prop. d.    |
- *
- * ExtCompat[] is an array of valid Extended Compatiblity descriptors
- * which have the following format:
- *
- * | off | name                  | type | description                         |
- * |-----+-----------------------+------+-------------------------------------|
- * |   0 | bFirstInterfaceNumber | U8   | index of the interface or of the 1st|
- * |     |                       |      | interface in an IAD group           |
- * |   1 | Reserved              | U8   | 0                                   |
- * |   2 | CompatibleID          | U8[8]| compatible ID string                |
- * |  10 | SubCompatibleID       | U8[8]| subcompatible ID string             |
- * |  18 | Reserved              | U8[6]| 0                                   |
- *
- * ExtProp[] is an array of valid Extended Properties descriptors
- * which have the following format:
- *
- * | off | name                  | type | description                         |
- * |-----+-----------------------+------+-------------------------------------|
- * |   0 | dwSize                | U32  | length of the descriptor            |
- * |   4 | dwPropertyDataType    | U32  | 1..7                                |
- * |   8 | wPropertyNameLength   | U16  | bPropertyName length (NL)           |
- * |  10 | bPropertyName         |U8[NL]| name of this property               |
- * |10+NL| dwPropertyDataLength  | U32  | bPropertyData length (DL)           |
- * |14+NL| bProperty             |U8[DL]| payload of this property            |
  */
 
 struct usb_functionfs_strings_head {

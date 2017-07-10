@@ -34,6 +34,13 @@
 #include <linux/sched.h>
 #include <net/flow_keys.h>
 
+/* net device ftrace debug define */
+#undef NETDEV_TRACE
+#ifdef NETDEV_TRACE
+#define NETDEV_DL_TRACE 1
+#define NETDEV_UL_TRACE 1
+#endif
+
 /* A. Checksumming of received packets by device.
  *
  * CHECKSUM_NONE:
@@ -341,7 +348,6 @@ enum {
 	SKB_FCLONE_UNAVAILABLE,	/* skb has no fclone (from head_cache) */
 	SKB_FCLONE_ORIG,	/* orig skb (from fclone_cache) */
 	SKB_FCLONE_CLONE,	/* companion fclone skb (from fclone_cache) */
-	SKB_FCLONE_FREE,	/* this companion fclone skb is available */
 };
 
 enum {
@@ -655,6 +661,10 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	atomic_t		users;
+
+#ifdef NETDEV_TRACE
+	unsigned int		dbg_flag;
+#endif
 };
 
 #ifdef __KERNEL__
@@ -811,7 +821,7 @@ static inline bool skb_fclone_busy(const struct sock *sk,
 	fclones = container_of(skb, struct sk_buff_fclones, skb1);
 
 	return skb->fclone == SKB_FCLONE_ORIG &&
-	       fclones->skb2.fclone == SKB_FCLONE_CLONE &&
+	       atomic_read(&fclones->fclone_ref) > 1 &&
 	       fclones->skb2.sk == sk;
 }
 

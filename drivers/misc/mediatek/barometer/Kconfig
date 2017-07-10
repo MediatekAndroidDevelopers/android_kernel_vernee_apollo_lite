@@ -1,0 +1,5 @@
+
+config CUSTOM_KERNEL_BAROMETER
+	bool "CUSTOM_KERNEL_BAROMETER"
+	help
+	  To detect barometer raw data

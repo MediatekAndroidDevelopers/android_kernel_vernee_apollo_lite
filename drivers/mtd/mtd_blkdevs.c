@@ -406,12 +406,14 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 		snprintf(gd->disk_name, sizeof(gd->disk_name),
 			 "%s%d", tr->name, new->devnum);
 
-	set_capacity(gd, (new->size * tr->blksize) >> 9);
+	set_capacity(gd, ((u64)new->size * tr->blksize) >> 9);
 
 	/* Create the request queue */
 	spin_lock_init(&new->queue_lock);
 	new->rq = blk_init_queue(mtd_blktrans_request, &new->queue_lock);
-
+#ifdef CONFIG_MTK_MTD_NAND
+	new->rq->backing_dev_info.ra_pages = 0;
+#endif
 	if (!new->rq)
 		goto error3;
 

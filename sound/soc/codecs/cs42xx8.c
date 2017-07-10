@@ -54,6 +54,8 @@ static const DECLARE_TLV_DB_SCALE(adc_tlv, -6400, 50, 0);
 static const char *const cs42xx8_adc_single[] = { "Differential", "Single-Ended" };
 static const char *const cs42xx8_szc[] = { "Immediate Change", "Zero Cross",
 					"Soft Ramp", "Soft Ramp on Zero Cross" };
+static const char * const cs42xx8_ain5_single[] = { "AIN5A", "AIN5B" };
+static const char * const cs42xx8_ain6_single[] = { "AIN6A", "AIN6B" };
 
 static const struct soc_enum adc1_single_enum =
 	SOC_ENUM_SINGLE(CS42XX8_ADCCTL, 4, 2, cs42xx8_adc_single);
@@ -61,6 +63,10 @@ static const struct soc_enum adc2_single_enum =
 	SOC_ENUM_SINGLE(CS42XX8_ADCCTL, 3, 2, cs42xx8_adc_single);
 static const struct soc_enum adc3_single_enum =
 	SOC_ENUM_SINGLE(CS42XX8_ADCCTL, 2, 2, cs42xx8_adc_single);
+static const struct soc_enum adc3_ain5_enum =
+	SOC_ENUM_SINGLE(CS42XX8_ADCCTL, 1, 2, cs42xx8_ain5_single);
+static const struct soc_enum adc3_ain6_enum =
+	SOC_ENUM_SINGLE(CS42XX8_ADCCTL, 0, 2, cs42xx8_ain6_single);
 static const struct soc_enum dac_szc_enum =
 	SOC_ENUM_SINGLE(CS42XX8_TXCTL, 5, 4, cs42xx8_szc);
 static const struct soc_enum adc_szc_enum =
@@ -102,7 +108,24 @@ static const struct snd_kcontrol_new cs42xx8_adc3_snd_controls[] = {
 			   CS42XX8_VOLAIN6, 0, -0x80, 0x30, 7, 0, adc_tlv),
 	SOC_DOUBLE("ADC3 Invert Switch", CS42XX8_ADCINV, 4, 5, 1, 0),
 	SOC_ENUM("ADC3 Single Ended Mode Switch", adc3_single_enum),
+	SOC_ENUM("ADC3 AIN5 Mux Switch", adc3_ain5_enum),
+	SOC_ENUM("ADC3 AIN6 Mux Switch", adc3_ain6_enum),
 };
+
+static int cs42xx8_adc_delay_event(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *kcontrol, int event)
+{
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		msleep(400);
+		break;
+	default:
+		pr_err("Invalid event = 0x%x\n", event);
+	}
+
+	return 0;
+}
+
 
 static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 	SND_SOC_DAPM_DAC("DAC1", "Playback", CS42XX8_PWRCTL, 1, 1),
@@ -119,8 +142,11 @@ static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 	SND_SOC_DAPM_OUTPUT("AOUT4L"),
 	SND_SOC_DAPM_OUTPUT("AOUT4R"),
 
-	SND_SOC_DAPM_ADC("ADC1", "Capture", CS42XX8_PWRCTL, 5, 1),
-	SND_SOC_DAPM_ADC("ADC2", "Capture", CS42XX8_PWRCTL, 6, 1),
+	SND_SOC_DAPM_ADC_E("ADC1", "Capture", CS42XX8_PWRCTL, 5, 1,
+			cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_ADC_E("ADC2", "Capture", CS42XX8_PWRCTL, 6, 1,
+			cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
+
 
 	SND_SOC_DAPM_INPUT("AIN1L"),
 	SND_SOC_DAPM_INPUT("AIN1R"),
@@ -131,7 +157,8 @@ static const struct snd_soc_dapm_widget cs42xx8_dapm_widgets[] = {
 };
 
 static const struct snd_soc_dapm_widget cs42xx8_adc3_dapm_widgets[] = {
-	SND_SOC_DAPM_ADC("ADC3", "Capture", CS42XX8_PWRCTL, 7, 1),
+	SND_SOC_DAPM_ADC_E("ADC3", "Capture", CS42XX8_PWRCTL, 7, 1,
+			   cs42xx8_adc_delay_event, SND_SOC_DAPM_POST_PMU),
 
 	SND_SOC_DAPM_INPUT("AIN3L"),
 	SND_SOC_DAPM_INPUT("AIN3R"),

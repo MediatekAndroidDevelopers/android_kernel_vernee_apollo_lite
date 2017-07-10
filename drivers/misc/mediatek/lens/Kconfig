@@ -1,0 +1,36 @@
+config MTK_LENS
+  bool CONFIG_MTK_LENS
+  default n
+  help
+    CONFIG_MTK_LENS
+
+#
+# LENS
+#
+
+config MTK_LENS_DUMMYLENS_SUPPORT
+  bool "Dummy Lens Driver"
+  default n
+  help
+    Dummy Lens Driver
+    This config is used to enable the corresponding
+    lens driver for the camera sensor module
+    Set as y if the driver is used in this project
+
+config MTK_LENS_BU6424AF_SUPPORT
+  bool "BU6424AF Lens Driver"
+  default n
+  help
+    BU6424AF Lens Driver
+    This config is used to enable the corresponding
+    lens driver for the camera sensor module
+    Set as y if the driver is used in this project
+
+config MTK_LENS_DW9714AF_SUPPORT
+  bool "DW9714AF Lens Driver"
+  default n
+  help
+    DW9714AF Lens Driver
+    This config is used to enable the corresponding
+    lens driver for the camera sensor module
+    Set as y if the driver is used in this project

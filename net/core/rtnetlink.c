@@ -54,6 +54,76 @@
 #include <net/rtnetlink.h>
 #include <net/net_namespace.h>
 
+#ifdef CONFIG_MTK_NET_LOGGING
+#include <linux/stacktrace.h>
+#define RTNL_DEBUG_ADDRS_COUNT 10
+#define RTNL_LOCK_MAX_HOLD_TIME 3
+
+struct rtnl_debug_btrace_t {
+	char *process_name;
+	int    pid;
+	unsigned long long when;
+	unsigned long addrs[RTNL_DEBUG_ADDRS_COUNT];
+	unsigned int entry_nr;
+	char flag;/*1 this process has already get rtnl_lock,0 : relase rtnl_lock*/
+	struct task_struct *rtnl_lock_owner;
+	struct timer_list    timer;
+};
+
+static struct rtnl_debug_btrace_t rtnl_instance = {
+	.process_name = NULL,
+	.pid = 0,
+	.when = 0,
+	.entry_nr = 0,
+	.flag = 0,
+	.rtnl_lock_owner = NULL,
+};
+
+static void rtnl_print_btrace(unsigned long data);
+static DEFINE_TIMER(rtnl_chk_timer, rtnl_print_btrace, 0, 0);
+
+void rtnl_get_btrace(void *who)
+{
+	struct stack_trace debug_trace;
+
+	debug_trace.max_entries = RTNL_DEBUG_ADDRS_COUNT;
+	debug_trace.nr_entries = 0;
+	debug_trace.entries = rtnl_instance.addrs;
+	debug_trace.skip = 0;
+	save_stack_trace(&debug_trace);
+	rtnl_instance.process_name = who;
+	rtnl_instance.when = sched_clock();
+	rtnl_instance.flag = 1;
+	rtnl_instance.pid = current->pid;
+	rtnl_instance.rtnl_lock_owner  = current;
+	rtnl_instance.entry_nr = debug_trace.nr_entries;
+	rtnl_instance.flag = 1;
+	mod_timer(&rtnl_chk_timer, jiffies + RTNL_LOCK_MAX_HOLD_TIME * HZ);
+}
+
+void rtnl_print_btrace(unsigned long data)
+{	if (rtnl_instance.flag) {
+		struct stack_trace show_trace;
+
+		show_trace.nr_entries = rtnl_instance.entry_nr;
+		show_trace.entries = rtnl_instance.addrs;
+		show_trace.max_entries = RTNL_DEBUG_ADDRS_COUNT;
+		pr_info("-----------------rtnl_print_btrace start--------------------\n");
+		pr_info("[mtk_net][rtnl_lock] %s[%d] hold lock more than 2 sec,start time: %lld\n",
+			rtnl_instance.process_name, rtnl_instance.pid, rtnl_instance.when);
+		print_stack_trace(&show_trace, 0);
+		pr_info("-----------------rtnl_print_btrace end--------------------\n");
+		/*TODO:  Here Maybe  I will triger a AEE coredump for getting more info about this issue*/
+		} else {
+				pr_info("[mtk_net][rtnl_lock]There is no process hold rtnl lock\n");
+		}
+}
+
+void rtnl_relase_btrace(void)
+{
+	rtnl_instance.flag = 0;
+}
+#endif
 struct rtnl_link {
 	rtnl_doit_func		doit;
 	rtnl_dumpit_func	dumpit;
@@ -65,12 +135,18 @@ static DEFINE_MUTEX(rtnl_mutex);
 void rtnl_lock(void)
 {
 	mutex_lock(&rtnl_mutex);
+#ifdef CONFIG_MTK_NET_LOGGING
+	rtnl_get_btrace(current->comm);
+#endif
 }
 EXPORT_SYMBOL(rtnl_lock);
 
 void __rtnl_unlock(void)
 {
 	mutex_unlock(&rtnl_mutex);
+#ifdef CONFIG_MTK_NET_LOGGING
+	rtnl_relase_btrace();
+#endif
 }
 
 void rtnl_unlock(void)
@@ -2349,7 +2425,7 @@ int ndo_dflt_fdb_add(struct ndmsg *ndm,
 	 * implement its own handler for this.
 	 */
 	if (ndm->ndm_state && !(ndm->ndm_state & NUD_PERMANENT)) {
-		pr_info("%s: FDB only supports static addresses\n", dev->name);
+		pr_debug("%s: FDB only supports static addresses\n", dev->name);
 		return err;
 	}
 
@@ -2381,18 +2457,18 @@ static int rtnl_fdb_add(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 	ndm = nlmsg_data(nlh);
 	if (ndm->ndm_ifindex == 0) {
-		pr_info("PF_BRIDGE: RTM_NEWNEIGH with invalid ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_NEWNEIGH with invalid ifindex\n");
 		return -EINVAL;
 	}
 
 	dev = __dev_get_by_index(net, ndm->ndm_ifindex);
 	if (dev == NULL) {
-		pr_info("PF_BRIDGE: RTM_NEWNEIGH with unknown ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_NEWNEIGH with unknown ifindex\n");
 		return -ENODEV;
 	}
 
 	if (!tb[NDA_LLADDR] || nla_len(tb[NDA_LLADDR]) != ETH_ALEN) {
-		pr_info("PF_BRIDGE: RTM_NEWNEIGH with invalid address\n");
+		pr_debug("PF_BRIDGE: RTM_NEWNEIGH with invalid address\n");
 		return -EINVAL;
 	}
 
@@ -2445,7 +2521,7 @@ int ndo_dflt_fdb_del(struct ndmsg *ndm,
 	 * implement its own handler for this.
 	 */
 	if (!(ndm->ndm_state & NUD_PERMANENT)) {
-		pr_info("%s: FDB only supports static addresses\n", dev->name);
+		pr_debug("%s: FDB only supports static addresses\n", dev->name);
 		return err;
 	}
 
@@ -2476,18 +2552,18 @@ static int rtnl_fdb_del(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 	ndm = nlmsg_data(nlh);
 	if (ndm->ndm_ifindex == 0) {
-		pr_info("PF_BRIDGE: RTM_DELNEIGH with invalid ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_DELNEIGH with invalid ifindex\n");
 		return -EINVAL;
 	}
 
 	dev = __dev_get_by_index(net, ndm->ndm_ifindex);
 	if (dev == NULL) {
-		pr_info("PF_BRIDGE: RTM_DELNEIGH with unknown ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_DELNEIGH with unknown ifindex\n");
 		return -ENODEV;
 	}
 
 	if (!tb[NDA_LLADDR] || nla_len(tb[NDA_LLADDR]) != ETH_ALEN) {
-		pr_info("PF_BRIDGE: RTM_DELNEIGH with invalid address\n");
+		pr_debug("PF_BRIDGE: RTM_DELNEIGH with invalid address\n");
 		return -EINVAL;
 	}
 
@@ -2829,7 +2905,7 @@ static int rtnl_bridge_setlink(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 	dev = __dev_get_by_index(net, ifm->ifi_index);
 	if (!dev) {
-		pr_info("PF_BRIDGE: RTM_SETLINK with unknown ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_SETLINK with unknown ifindex\n");
 		return -ENODEV;
 	}
 
@@ -2902,7 +2978,7 @@ static int rtnl_bridge_dellink(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 	dev = __dev_get_by_index(net, ifm->ifi_index);
 	if (!dev) {
-		pr_info("PF_BRIDGE: RTM_SETLINK with unknown ifindex\n");
+		pr_debug("PF_BRIDGE: RTM_SETLINK with unknown ifindex\n");
 		return -ENODEV;
 	}
 
@@ -3106,4 +3182,3 @@ void __init rtnetlink_init(void)
 	rtnl_register(PF_BRIDGE, RTM_DELLINK, rtnl_bridge_dellink, NULL, NULL);
 	rtnl_register(PF_BRIDGE, RTM_SETLINK, rtnl_bridge_setlink, NULL, NULL);
 }
-

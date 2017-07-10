@@ -1787,7 +1787,6 @@ static int at91udc_probe(struct platform_device *pdev)
 	retval = clk_prepare(udc->fclk);
 	if (retval)
 		goto fail1a;
-
 	retval = clk_prepare_enable(udc->iclk);
 	if (retval)
 		goto fail1b;
@@ -1910,7 +1909,6 @@ static int __exit at91udc_remove(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	release_mem_region(res->start, resource_size(res));
-
 	if (IS_ENABLED(CONFIG_COMMON_CLK))
 		clk_unprepare(udc->uclk);
 	clk_unprepare(udc->fclk);

@@ -28,10 +28,20 @@
 #include <linux/slab.h>
 #include <linux/dmi.h>
 #include <linux/dma-mapping.h>
+#include <linux/kernel.h>
 
 #include "xhci.h"
 #include "xhci-trace.h"
 
+#ifdef CONFIG_USB_XHCI_MTK
+#include <linux/uaccess.h>
+#include <linux/dma-mapping.h>
+#include <linux/platform_device.h>
+#include "xhci-mtk.h"
+#endif
+#ifdef CONFIG_SSUSB_MTK_XHCI
+#include "xhci-ssusb-mtk.h"
+#endif
 #define DRIVER_AUTHOR "Sarah Sharp"
 #define DRIVER_DESC "'eXtensible' Host Controller (xHC) Driver"
 
@@ -45,6 +55,7 @@ MODULE_PARM_DESC(link_quirk, "Don't clear the chain bit on a link TRB");
 static unsigned int quirks;
 module_param(quirks, uint, S_IRUGO);
 MODULE_PARM_DESC(quirks, "Bit flags for quirks to be enabled as default");
+
 
 /* TODO: copied from ehci-hcd.c - can this be refactored? */
 /*
@@ -628,7 +639,11 @@ int xhci_run(struct usb_hcd *hcd)
 			"// Set the interrupt modulation register");
 	temp = readl(&xhci->ir_set->irq_control);
 	temp &= ~ER_IRQ_INTERVAL_MASK;
+#ifndef CONFIG_SSUSB_MTK_XHCI
 	temp |= (u32) 160;
+#else
+	temp |= (u32) ((xhci->quirks & XHCI_MTK_HOST) ? 20 : 160);
+#endif
 	writel(temp, &xhci->ir_set->irq_control);
 
 	/* Set the HCD state before we enable the irqs */
@@ -664,8 +679,9 @@ static void xhci_only_stop_hcd(struct usb_hcd *hcd)
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 
 	spin_lock_irq(&xhci->lock);
+#ifndef CONFIG_USB_XHCI_MTK
 	xhci_halt(xhci);
-
+#endif
 	/* The shared_hcd is going to be deallocated shortly (the USB core only
 	 * calls this function when allocation fails in usb_add_hcd(), or
 	 * usb_remove_hcd() is called).  So we need to unset xHCI's pointer.
@@ -692,7 +708,6 @@ void xhci_stop(struct usb_hcd *hcd)
 		xhci_only_stop_hcd(xhci->shared_hcd);
 		return;
 	}
-
 	spin_lock_irq(&xhci->lock);
 	/* Make sure the xHC is halted for a USB3 roothub
 	 * (xhci_stop() could be called as part of failed init).
@@ -711,10 +726,10 @@ void xhci_stop(struct usb_hcd *hcd)
 				"%s: compliance mode recovery timer deleted",
 				__func__);
 	}
-
+#ifndef CONFIG_USB_XHCI_MTK
 	if (xhci->quirks & XHCI_AMD_PLL_FIX)
 		usb_amd_dev_put();
-
+#endif
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init,
 			"// Disabling event ring interrupts");
 	temp = readl(&xhci->op_regs->status);
@@ -1698,11 +1713,20 @@ int xhci_drop_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 
 	xhci_endpoint_zero(xhci, xhci->devs[udev->slot_id], ep);
 
+#ifdef CONFIG_USB_XHCI_MTK
+	xhci_mtk_drop_ep_quirk(hcd, udev, ep);
+#endif
+#ifdef CONFIG_SSUSB_MTK_XHCI
+	if (xhci->quirks & XHCI_MTK_HOST)
+		xhci_mtk_drop_ep_quirk(hcd, udev, ep);
+#endif
 	xhci_dbg(xhci, "drop ep 0x%x, slot id %d, new drop flags = %#x, new add flags = %#x\n",
 			(unsigned int) ep->desc.bEndpointAddress,
 			udev->slot_id,
 			(unsigned int) new_drop_flags,
 			(unsigned int) new_add_flags);
+
+
 	return 0;
 }
 
@@ -1796,6 +1820,22 @@ int xhci_add_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 		return -ENOMEM;
 	}
 
+#ifdef CONFIG_USB_XHCI_MTK
+	ret = xhci_mtk_add_ep_quirk(hcd, udev, ep);
+	if (ret < 0) {
+		xhci_free_or_cache_endpoint_ring(xhci,
+			virt_dev, ep_index);
+			return ret;
+	}
+#endif
+#ifdef CONFIG_SSUSB_MTK_XHCI
+		if (xhci->quirks & XHCI_MTK_HOST) {
+				ret = xhci_mtk_add_ep_quirk(hcd, udev, ep);
+				if (ret < 0)
+					return ret;
+		}
+#endif
+
 	ctrl_ctx->add_flags |= cpu_to_le32(added_ctxs);
 	new_add_flags = le32_to_cpu(ctrl_ctx->add_flags);
 
@@ -1815,6 +1855,7 @@ int xhci_add_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 			udev->slot_id,
 			(unsigned int) new_drop_flags,
 			(unsigned int) new_add_flags);
+
 	return 0;
 }
 
@@ -4879,6 +4920,13 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 		return 0;
 	}
 
+#ifdef CONFIG_USB_XHCI_MTK
+	retval = mtk_xhci_ip_init(hcd, xhci);
+	if (retval)
+		goto error;
+	mtk_xhci_scheduler_init();
+#endif
+
 	xhci->cap_regs = hcd->regs;
 	xhci->op_regs = hcd->regs +
 		HC_LENGTH(readl(&xhci->cap_regs->hc_capbase));
@@ -4942,6 +4990,9 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 	xhci_dbg(xhci, "Called HCD init\n");
 	return 0;
 error:
+#ifdef CONFIG_USB_XHCI_MTK
+	mtk_xhci_reset(xhci);
+#endif
 	kfree(xhci);
 	return retval;
 }

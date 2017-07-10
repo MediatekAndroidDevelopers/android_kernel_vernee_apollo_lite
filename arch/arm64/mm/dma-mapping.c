@@ -170,7 +170,7 @@ static void *__dma_alloc_noncoherent(struct device *dev, size_t size,
 	coherent_ptr = dma_common_contiguous_remap(page, size, VM_USERMAP,
 				__get_dma_pgprot(attrs,
 					__pgprot(PROT_NORMAL_NC), false),
-					NULL);
+					__builtin_return_address(0));
 	if (!coherent_ptr)
 		goto no_map;
 
@@ -429,7 +429,7 @@ out:
 
 static int __init swiotlb_late_init(void)
 {
-	size_t swiotlb_size = min(SZ_64M, MAX_ORDER_NR_PAGES << PAGE_SHIFT);
+	size_t swiotlb_size = min(SZ_2M, MAX_ORDER_NR_PAGES << PAGE_SHIFT);
 
 	dma_ops = &noncoherent_swiotlb_dma_ops;
 

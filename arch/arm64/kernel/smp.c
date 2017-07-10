@@ -36,6 +36,13 @@
 #include <linux/completion.h>
 #include <linux/of.h>
 #include <linux/irq_work.h>
+#ifdef CONFIG_TRUSTY
+#ifdef CONFIG_TRUSTY_INTERRUPT_MAP
+#include <linux/trusty/trusty.h>
+#else
+#include <linux/irqdomain.h>
+#endif
+#endif
 
 #include <asm/alternative.h>
 #include <asm/atomic.h>
@@ -51,6 +58,10 @@
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
+#ifdef CONFIG_MTPROF
+#include "mt_sched_mon.h"
+#endif
+#include <mt-plat/mtk_ram_console.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
@@ -69,7 +80,17 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 	IPI_TIMER,
 	IPI_IRQ_WORK,
+#ifdef CONFIG_TRUSTY
+	IPI_CUSTOM_FIRST,
+	IPI_CUSTOM_LAST = 15,
+#endif
 };
+
+#ifdef CONFIG_TRUSTY
+#ifndef CONFIG_TRUSTY_INTERRUPT_MAP
+struct irq_domain *ipi_custom_irq_domain;
+#endif
+#endif
 
 /*
  * Boot a secondary CPU, and assign it the specified idle task.
@@ -100,21 +121,37 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 	 * Now bring the CPU into our world.
 	 */
 	ret = boot_secondary(cpu, idle);
+
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
+
 	if (ret == 0) {
 		/*
 		 * CPU was successfully started, wait for it to come online or
 		 * time out.
 		 */
+		#ifdef CONFIG_ARCH_MT6797
+		wait_for_completion_timeout(&cpu_running,
+					    msecs_to_jiffies(3000));
+		#else
 		wait_for_completion_timeout(&cpu_running,
 					    msecs_to_jiffies(1000));
+		#endif
 
 		if (!cpu_online(cpu)) {
 			pr_crit("CPU%u: failed to come online\n", cpu);
+			#ifdef CONFIG_ARCH_MT6797
+			BUG_ON(1);
+			#endif
 			ret = -EIO;
 		}
 	} else {
 		pr_err("CPU%u: failed to boot: %d\n", cpu, ret);
 	}
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
 
 	secondary_data.stack = NULL;
 
@@ -135,6 +172,8 @@ asmlinkage void secondary_start_kernel(void)
 	struct mm_struct *mm = &init_mm;
 	unsigned int cpu = smp_processor_id();
 
+	aee_rr_rec_hotplug_footprint(cpu, 1);
+
 	/*
 	 * All kernel threads share the same mm context; grab a
 	 * reference and switch to it.
@@ -143,33 +182,62 @@ asmlinkage void secondary_start_kernel(void)
 	current->active_mm = mm;
 	cpumask_set_cpu(cpu, mm_cpumask(mm));
 
+	aee_rr_rec_hotplug_footprint(cpu, 2);
+
 	set_my_cpu_offset(per_cpu_offset(smp_processor_id()));
 	printk("CPU%u: Booted secondary processor\n", cpu);
+
+	aee_rr_rec_hotplug_footprint(cpu, 3);
 
 	/*
 	 * TTBR0 is only used for the identity mapping at this stage. Make it
 	 * point to zero page to avoid speculatively fetching new entries.
 	 */
 	cpu_set_reserved_ttbr0();
+
+	aee_rr_rec_hotplug_footprint(cpu, 4);
+
 	flush_tlb_all();
 
+	aee_rr_rec_hotplug_footprint(cpu, 5);
+
 	preempt_disable();
+
+	aee_rr_rec_hotplug_footprint(cpu, 6);
+
 	trace_hardirqs_off();
+
+	aee_rr_rec_hotplug_footprint(cpu, 7);
 
 	if (cpu_ops[cpu]->cpu_postboot)
 		cpu_ops[cpu]->cpu_postboot();
+
+	aee_rr_rec_hotplug_footprint(cpu, 8);
 
 	/*
 	 * Log the CPU info before it is marked online and might get read.
 	 */
 	cpuinfo_store_cpu();
 
+	aee_rr_rec_hotplug_footprint(cpu, 9);
+
 	/*
 	 * Enable GIC and timers.
 	 */
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
 	notify_cpu_starting(cpu);
 
+	aee_rr_rec_hotplug_footprint(cpu, 10);
+
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
+
 	smp_store_cpu_info(cpu);
+
+	aee_rr_rec_hotplug_footprint(cpu, 11);
 
 	/*
 	 * OK, now it's safe to let the boot CPU continue.  Wait for
@@ -177,15 +245,31 @@ asmlinkage void secondary_start_kernel(void)
 	 * before we continue.
 	 */
 	set_cpu_online(cpu, true);
+
+	aee_rr_rec_hotplug_footprint(cpu, 12);
+
 	complete(&cpu_running);
 
+	aee_rr_rec_hotplug_footprint(cpu, 13);
+
+	local_dbg_enable();
+
+	aee_rr_rec_hotplug_footprint(cpu, 14);
+
 	local_irq_enable();
+
+	aee_rr_rec_hotplug_footprint(cpu, 15);
+
 	local_async_enable();
+
+	aee_rr_rec_hotplug_footprint(cpu, 16);
 
 	/*
 	 * OK, it's off to the idle thread for us
 	 */
 	cpu_startup_entry(CPUHP_ONLINE);
+
+	aee_rr_rec_hotplug_footprint(cpu, 17);
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -224,17 +308,25 @@ int __cpu_disable(void)
 	 * Take this CPU offline.  Once we clear this, we can't return,
 	 * and we must not schedule until we're ready to give up the cpu.
 	 */
+	aee_rr_rec_hotplug_footprint(cpu, 71);
+
 	set_cpu_online(cpu, false);
+
+	aee_rr_rec_hotplug_footprint(cpu, 72);
 
 	/*
 	 * OK - migrate IRQs away from this CPU
 	 */
 	migrate_irqs();
 
+	aee_rr_rec_hotplug_footprint(cpu, 73);
+
 	/*
 	 * Remove this CPU from the vm mask set of all processes.
 	 */
 	clear_tasks_mm_cpumask(cpu);
+
+	aee_rr_rec_hotplug_footprint(cpu, 74);
 
 	return 0;
 }
@@ -264,7 +356,9 @@ void __cpu_die(unsigned int cpu)
 		pr_crit("CPU%u: cpu didn't die\n", cpu);
 		return;
 	}
+#ifndef CONFIG_ARCH_MT6797
 	pr_notice("CPU%u: shutdown\n", cpu);
+#endif
 
 	/*
 	 * Now that the dying CPU is beyond the point of no return w.r.t.
@@ -272,8 +366,17 @@ void __cpu_die(unsigned int cpu)
 	 * verify that it has really left the kernel before we consider
 	 * clobbering anything it might still be using.
 	 */
+
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
+
 	if (!op_cpu_kill(cpu))
 		pr_warn("CPU%d may not have shut down cleanly\n", cpu);
+
+#ifdef CONFIG_MTK_CPU_HOTPLUG_DEBUG_3
+	TIMESTAMP_REC(hotplug_ts_rec, TIMESTAMP_FILTER,  cpu, 0, 0, 0);
+#endif
 }
 
 /*
@@ -288,12 +391,20 @@ void cpu_die(void)
 {
 	unsigned int cpu = smp_processor_id();
 
+	aee_rr_rec_hotplug_footprint(cpu, 51);
+
 	idle_task_exit();
+
+	aee_rr_rec_hotplug_footprint(cpu, 52);
 
 	local_irq_disable();
 
+	aee_rr_rec_hotplug_footprint(cpu, 53);
+
 	/* Tell __cpu_die() that this CPU is now safe to dispose of */
 	complete(&cpu_died);
+
+	aee_rr_rec_hotplug_footprint(cpu, 54);
 
 	/*
 	 * Actually shutdown the CPU. This must never fail. The specific hotplug
@@ -302,14 +413,20 @@ void cpu_die(void)
 	 */
 	cpu_ops[cpu]->cpu_die(cpu);
 
+	aee_rr_rec_hotplug_footprint(cpu, 55);
+
 	BUG();
 }
 #endif
 
 void __init smp_cpus_done(unsigned int max_cpus)
 {
-	pr_info("SMP: Total of %d processors activated.\n", num_online_cpus());
-	apply_alternatives();
+	unsigned long bogosum = loops_per_jiffy * num_online_cpus();
+
+	pr_info("SMP: Total of %d processors activated (%lu.%02lu BogoMIPS).\n",
+			num_online_cpus(), bogosum / (500000/HZ),
+			(bogosum / (5000/HZ)) % 100);
+	apply_alternatives_all();
 }
 
 void __init smp_prepare_boot_cpu(void)
@@ -580,26 +697,50 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	case IPI_CALL_FUNC:
 		irq_enter();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_start(ipinr);
+#endif
 		generic_smp_call_function_interrupt();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_end(ipinr);
+#endif
 		irq_exit();
 		break;
 
 	case IPI_CALL_FUNC_SINGLE:
 		irq_enter();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_start(ipinr);
+#endif
 		generic_smp_call_function_single_interrupt();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_end(ipinr);
+#endif
 		irq_exit();
 		break;
 
 	case IPI_CPU_STOP:
 		irq_enter();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_start(ipinr);
+#endif
 		ipi_cpu_stop(cpu);
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_end(ipinr);
+#endif
 		irq_exit();
 		break;
 
 #ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 	case IPI_TIMER:
 		irq_enter();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_start(ipinr);
+#endif
 		tick_receive_broadcast();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_end(ipinr);
+#endif
 		irq_exit();
 		break;
 #endif
@@ -607,12 +748,27 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 #ifdef CONFIG_IRQ_WORK
 	case IPI_IRQ_WORK:
 		irq_enter();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_start(ipinr);
+#endif
 		irq_work_run();
+#ifdef CONFIG_MTPROF
+		mt_trace_ISR_end(ipinr);
+#endif
 		irq_exit();
 		break;
 #endif
 
 	default:
+#ifdef CONFIG_TRUSTY
+		if (ipinr >= IPI_CUSTOM_FIRST && ipinr <= IPI_CUSTOM_LAST)
+#ifndef CONFIG_TRUSTY_INTERRUPT_MAP
+			handle_domain_irq(ipi_custom_irq_domain, ipinr, regs);
+#else
+			handle_trusty_ipi(ipinr);
+#endif
+		else
+#endif
 		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
 		break;
 	}
@@ -621,6 +777,67 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		trace_ipi_exit(ipi_types[ipinr]);
 	set_irq_regs(old_regs);
 }
+
+#ifdef CONFIG_TRUSTY
+#ifndef CONFIG_TRUSTY_INTERRUPT_MAP
+static void custom_ipi_enable(struct irq_data *data)
+{
+	/*
+	 * Always trigger a new ipi on enable. This only works for clients
+	 * that then clear the ipi before unmasking interrupts.
+	 */
+	smp_cross_call(cpumask_of(smp_processor_id()), data->irq);
+}
+
+static void custom_ipi_disable(struct irq_data *data)
+{
+}
+
+static struct irq_chip custom_ipi_chip = {
+	.name			= "CustomIPI",
+	.irq_enable		= custom_ipi_enable,
+	.irq_disable		= custom_ipi_disable,
+};
+
+static void handle_custom_ipi_irq(unsigned int irq, struct irq_desc *desc)
+{
+	if (!desc->action) {
+		pr_crit("CPU%u: Unknown IPI message 0x%x, no custom handler\n",
+			smp_processor_id(), irq);
+		return;
+	}
+
+	if (!cpumask_test_cpu(smp_processor_id(), desc->percpu_enabled))
+		return; /* IPIs may not be maskable in hardware */
+
+	handle_percpu_devid_irq(irq, desc);
+}
+
+static int __init smp_custom_ipi_init(void)
+{
+	int ipinr;
+
+	/* alloc descs for these custom ipis/irqs before using them */
+	irq_alloc_descs(IPI_CUSTOM_FIRST, 0,
+		IPI_CUSTOM_LAST - IPI_CUSTOM_FIRST + 1, 0);
+
+	for (ipinr = IPI_CUSTOM_FIRST; ipinr <= IPI_CUSTOM_LAST; ipinr++) {
+		irq_set_percpu_devid(ipinr);
+		irq_set_chip_and_handler(ipinr, &custom_ipi_chip,
+					 handle_custom_ipi_irq);
+		set_irq_flags(ipinr, IRQF_VALID | IRQF_NOAUTOEN);
+	}
+	ipi_custom_irq_domain = irq_domain_add_legacy(NULL,
+					IPI_CUSTOM_LAST - IPI_CUSTOM_FIRST + 1,
+					IPI_CUSTOM_FIRST, IPI_CUSTOM_FIRST,
+					&irq_domain_simple_ops,
+					&custom_ipi_chip);
+
+	return 0;
+}
+core_initcall(smp_custom_ipi_init);
+#endif
+#endif
 
 void smp_send_reschedule(int cpu)
 {

@@ -99,6 +99,7 @@ int sysctl_tcp_thin_dupack __read_mostly;
 
 int sysctl_tcp_moderate_rcvbuf __read_mostly = 1;
 int sysctl_tcp_early_retrans __read_mostly = 3;
+int sysctl_tcp_default_init_rwnd __read_mostly = TCP_INIT_CWND * 2;
 
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
 #define FLAG_WIN_UPDATE		0x02 /* Incoming ACK was a window update.	*/
@@ -2008,7 +2009,7 @@ static bool tcp_check_sack_reneging(struct sock *sk, int flag)
 					  msecs_to_jiffies(10));
 
 		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
-					  delay, TCP_RTO_MAX);
+					  delay, sysctl_tcp_rto_max);
 		return true;
 	}
 	return false;
@@ -2059,7 +2060,7 @@ static bool tcp_pause_early_retransmit(struct sock *sk, int flag)
 		return false;
 
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_EARLY_RETRANS, delay,
-				  TCP_RTO_MAX);
+				  sysctl_tcp_rto_max);
 	return true;
 }
 
@@ -2989,7 +2990,7 @@ void tcp_rearm_rto(struct sock *sk)
 				rto = delta;
 		}
 		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, rto,
-					  TCP_RTO_MAX);
+					  sysctl_tcp_rto_max);
 	}
 }
 
@@ -3235,10 +3236,10 @@ static void tcp_ack_probe(struct sock *sk)
 		 * This function is not for random using!
 		 */
 	} else {
-		unsigned long when = inet_csk_rto_backoff(icsk, TCP_RTO_MAX);
+		unsigned long when = inet_csk_rto_backoff(icsk, sysctl_tcp_rto_max);
 
 		inet_csk_reset_xmit_timer(sk, ICSK_TIME_PROBE0,
-					  when, TCP_RTO_MAX);
+					  when, sysctl_tcp_rto_max);
 	}
 }
 
@@ -4827,7 +4828,7 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	    /* More than one full frame received... */
-	if (((tp->rcv_nxt - tp->rcv_wup) > inet_csk(sk)->icsk_ack.rcv_mss &&
+	if (((tp->rcv_nxt - tp->rcv_wup) > sysctl_tcp_ack_number * inet_csk(sk)->icsk_ack.rcv_mss &&
 	     /* ... and right edge of window advances far enough.
 	      * (tcp_recvmsg() will send ACK otherwise). Or...
 	      */
@@ -5292,9 +5293,17 @@ void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
+#ifdef CONFIG_MTK_NET_LOGGING
+	struct tcphdr *th = tcp_hdr(skb);
+#endif
 
 	tcp_set_state(sk, TCP_ESTABLISHED);
-
+#ifdef CONFIG_MTK_NET_LOGGING
+	if (skb) {
+		pr_info("[mtk_net][tcp_finish_connect] inode = %lu; sport = %d; dport = %d\n",
+			sk->sk_socket ? SOCK_INODE(sk->sk_socket)->i_ino : 0, ntohs(th->dest), ntohs(th->source));
+	}
+#endif
 	if (skb != NULL) {
 		icsk->icsk_af_ops->sk_rx_dst_set(sk, skb);
 		security_inet_conn_established(sk, skb);
@@ -5500,7 +5509,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 			icsk->icsk_ack.lrcvtime = tcp_time_stamp;
 			tcp_enter_quickack_mode(sk);
 			inet_csk_reset_xmit_timer(sk, ICSK_TIME_DACK,
-						  TCP_DELACK_MAX, TCP_RTO_MAX);
+						  TCP_DELACK_MAX, sysctl_tcp_rto_max);
 
 discard:
 			__kfree_skb(skb);

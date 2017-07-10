@@ -297,6 +297,7 @@ extern unsigned long totalram_pages;
 extern unsigned long totalreserve_pages;
 extern unsigned long dirty_balance_reserve;
 extern unsigned long nr_free_buffer_pages(void);
+extern unsigned long nr_unallocated_buffer_pages(void);
 extern unsigned long nr_free_pagecache_pages(void);
 
 /* Definition of global_page_state not available yet */
@@ -322,6 +323,12 @@ extern void add_page_to_unevictable_list(struct page *page);
 
 extern void lru_cache_add_active_or_unevictable(struct page *page,
 						struct vm_area_struct *vma);
+#ifdef CONFIG_ZNDSWAP
+extern int dt_swapcache;
+extern int dt_writeback;
+extern int dt_filecache;
+extern int dt_watermark;
+#endif
 
 /* linux/mm/vmscan.c */
 extern unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
@@ -336,6 +343,8 @@ extern unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
 						struct zone *zone,
 						unsigned long *nr_scanned);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
+extern unsigned long shrink_memory_mask(unsigned long nr_to_reclaim,
+		gfp_t mask);
 extern int vm_swappiness;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
@@ -427,6 +436,7 @@ static inline long get_nr_swap_pages(void)
 
 extern void si_swapinfo(struct sysinfo *);
 extern swp_entry_t get_swap_page(void);
+extern swp_entry_t get_swap_page_by_state(struct page *);
 extern swp_entry_t get_swap_page_of_type(int);
 extern int add_swap_count_continuation(swp_entry_t, gfp_t);
 extern void swap_shmem_alloc(swp_entry_t);
@@ -437,13 +447,18 @@ extern void swapcache_free(swp_entry_t);
 extern int free_swap_and_cache(swp_entry_t);
 extern int swap_type_of(dev_t, sector_t, struct block_device **);
 extern unsigned int count_swap_pages(int, int);
+extern sector_t map_swap_entry(swp_entry_t entry, struct block_device **);
 extern sector_t map_swap_page(struct page *, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
+extern struct swap_info_struct *get_swap_info_struct(unsigned);
 extern int page_swapcount(struct page *);
+extern int swp_swapcount(swp_entry_t entry);
 extern struct swap_info_struct *page_swap_info(struct page *);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
+extern void get_swap_range_of_type(int type, swp_entry_t *start,
+		swp_entry_t *end, unsigned int limit);
 
 #ifdef CONFIG_MEMCG
 extern void
@@ -455,6 +470,9 @@ mem_cgroup_uncharge_swapcache(struct page *page, swp_entry_t ent, bool swapout)
 }
 #endif
 
+/* M for pswap interface */
+extern struct swap_info_struct *swap_info_get(swp_entry_t entry);
+extern void swap_info_unlock(struct swap_info_struct *si);
 #else /* CONFIG_SWAP */
 
 #define swap_address_space(entry)		(NULL)
@@ -541,6 +559,11 @@ static inline int page_swapcount(struct page *page)
 	return 0;
 }
 
+static inline int swp_swapcount(swp_entry_t entry)
+{
+	return 0;
+}
+
 #define reuse_swap_page(page)	(page_mapcount(page) == 1)
 
 static inline int try_to_free_swap(struct page *page)
@@ -553,6 +576,11 @@ static inline swp_entry_t get_swap_page(void)
 	swp_entry_t entry;
 	entry.val = 0;
 	return entry;
+}
+
+static inline swp_entry_t get_swap_page_by_state(struct page *page)
+{
+	return get_swap_page();
 }
 
 static inline void

@@ -33,6 +33,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
 #include <linux/efi.h>
+#include <linux/cma.h>
+#include <mt-plat/mtk_meminfo.h>
 
 #include <asm/fixmap.h>
 #include <asm/sections.h>
@@ -40,6 +42,7 @@
 #include <asm/sizes.h>
 #include <asm/tlb.h>
 #include <asm/alternative.h>
+#include <mt-plat/mrdump.h>
 
 #include "mm.h"
 
@@ -79,15 +82,35 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 	struct memblock_region *reg;
 	unsigned long zone_size[MAX_NR_ZONES], zhole_size[MAX_NR_ZONES];
 	unsigned long max_dma = min;
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+	phys_addr_t cma_base, cma_size;
+	unsigned long cma_base_pfn = ULONG_MAX;
+
+	cma_get_range(&cma_base, &cma_size);
+	if (cma_size)
+		cma_base_pfn = PFN_DOWN(cma_base);
+#endif
 
 	memset(zone_size, 0, sizeof(zone_size));
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA)) {
 		max_dma = PFN_DOWN(max_zone_dma_phys());
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+		max_dma = min(max_dma, cma_base_pfn);
+#endif
 		zone_size[ZONE_DMA] = max_dma - min;
 	}
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+	if (cma_size) {
+		zone_size[ZONE_NORMAL] = cma_base_pfn - max_dma;
+		zone_size[ZONE_MOVABLE] = max - cma_base_pfn;
+	} else {
+		zone_size[ZONE_NORMAL] = max - max_dma;
+	}
+#else
 	zone_size[ZONE_NORMAL] = max - max_dma;
+#endif
 
 	memcpy(zhole_size, zone_size, sizeof(zhole_size));
 
@@ -103,20 +126,38 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 			zhole_size[ZONE_DMA] -= dma_end - start;
 		}
 
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+		if (zone_size[ZONE_NORMAL] && end > max_dma && start < cma_base_pfn) {
+			unsigned long normal_end = min(end, cma_base_pfn);
+			unsigned long normal_start = max(start, max_dma);
+
+			zhole_size[ZONE_NORMAL] -= normal_end - normal_start;
+		}
+
+		if (cma_size && end > cma_base_pfn) {
+			unsigned long movable_end = min(end, max);
+			unsigned long movable_start = max(start, cma_base_pfn);
+
+			zhole_size[ZONE_MOVABLE] -= movable_end - movable_start;
+		}
+#else
 		if (end > max_dma) {
 			unsigned long normal_end = min(end, max);
 			unsigned long normal_start = max(start, max_dma);
 			zhole_size[ZONE_NORMAL] -= normal_end - normal_start;
 		}
+#endif
 	}
 
 	free_area_init_node(0, zone_size, min, zhole_size);
 }
 
 #ifdef CONFIG_HAVE_ARCH_PFN_VALID
+#define PFN_MASK ((1UL << (64 - PAGE_SHIFT)) - 1)
+
 int pfn_valid(unsigned long pfn)
 {
-	return memblock_is_memory(pfn << PAGE_SHIFT);
+	return (pfn & PFN_MASK) == pfn && memblock_is_memory(pfn << PAGE_SHIFT);
 }
 EXPORT_SYMBOL(pfn_valid);
 #endif
@@ -157,6 +198,7 @@ void __init arm64_memblock_init(void)
 		dma_phys_limit = max_zone_dma_phys();
 	dma_contiguous_reserve(dma_phys_limit);
 
+	mrdump_rsvmem();
 	memblock_allow_resize();
 	memblock_dump_all();
 }
@@ -325,6 +367,7 @@ void __init mem_init(void)
 
 void free_initmem(void)
 {
+	fixup_init();
 	free_initmem_default(0);
 	free_alternatives_memory();
 }

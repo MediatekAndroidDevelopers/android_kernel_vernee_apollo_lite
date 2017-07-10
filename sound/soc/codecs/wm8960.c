@@ -976,7 +976,9 @@ static int wm8960_probe(struct snd_soc_codec *codec)
 	ret = wm8960_reset(codec);
 	if (ret < 0) {
 		dev_err(codec->dev, "Failed to issue reset\n");
+#ifndef CONFIG_SND_SOC_MT7623_WM8960
 		return ret;
+#endif
 	}
 
 	wm8960->set_bias_level(codec, SND_SOC_BIAS_STANDBY);

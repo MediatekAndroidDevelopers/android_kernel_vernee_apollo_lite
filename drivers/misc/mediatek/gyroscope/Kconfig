@@ -1,0 +1,18 @@
+
+config CUSTOM_KERNEL_GYROSCOPE
+	bool "CUSTOM_KERNEL_GYROSCOPE"
+	help
+	  gyroscope sensor to detect gyroscope from x y z axis.
+	  If the platform is supported for gyroscope, this
+	  configuration should be configured, and the gyroscope
+	  driver configuration should be configured as well.
+
+config CUSTOM_KERNEL_GYROSCOPE_MODULE
+	bool "Use to control the gyroscope sensor build type"
+	help
+	  Use to control the sensor build tpye.
+	  If the config is set, it means sensor
+	  will build ko module.
+	  This is request fromo Google about odm driver.
+
+source "drivers/misc/mediatek/gyroscope/lsm6ds0gy/Kconfig"

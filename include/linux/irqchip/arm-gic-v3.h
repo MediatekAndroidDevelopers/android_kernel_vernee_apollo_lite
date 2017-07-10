@@ -18,8 +18,6 @@
 #ifndef __LINUX_IRQCHIP_ARM_GIC_V3_H
 #define __LINUX_IRQCHIP_ARM_GIC_V3_H
 
-#include <asm/sysreg.h>
-
 /*
  * Distributor registers. We assume we're running non-secure, with ARE
  * being set. Secure-only and non-ARE registers are not described.
@@ -127,20 +125,12 @@
 #define ICH_VMCR_PMR_SHIFT		24
 #define ICH_VMCR_PMR_MASK		(0xffUL << ICH_VMCR_PMR_SHIFT)
 
-#define ICC_EOIR1_EL1			sys_reg(3, 0, 12, 12, 1)
-#define ICC_IAR1_EL1			sys_reg(3, 0, 12, 12, 0)
-#define ICC_SGI1R_EL1			sys_reg(3, 0, 12, 11, 5)
-#define ICC_PMR_EL1			sys_reg(3, 0, 4, 6, 0)
-#define ICC_CTLR_EL1			sys_reg(3, 0, 12, 12, 4)
-#define ICC_SRE_EL1			sys_reg(3, 0, 12, 12, 5)
-#define ICC_GRPEN1_EL1			sys_reg(3, 0, 12, 12, 7)
-
 #define ICC_IAR1_EL1_SPURIOUS		0x3ff
-
-#define ICC_SRE_EL2			sys_reg(3, 4, 12, 9, 5)
 
 #define ICC_SRE_EL2_SRE			(1 << 0)
 #define ICC_SRE_EL2_ENABLE		(1 << 3)
+
+#include <asm/arch_gicv3.h>
 
 #define ICC_SGI1R_TARGET_LIST_SHIFT	0
 #define ICC_SGI1R_TARGET_LIST_MASK	(0xffff << ICC_SGI1R_TARGET_LIST_SHIFT)
@@ -199,12 +189,13 @@
 
 #ifndef __ASSEMBLY__
 
-#include <linux/stringify.h>
-
-static inline void gic_write_eoir(u64 irq)
+static inline void gic_enable_sre(void)
 {
-	asm volatile("msr_s " __stringify(ICC_EOIR1_EL1) ", %0" : : "r" (irq));
-	isb();
+	u32 val;
+
+	val = gic_read_sre();
+	val |= ICC_SRE_EL1_SRE;
+	gic_write_sre(val);
 }
 
 #endif

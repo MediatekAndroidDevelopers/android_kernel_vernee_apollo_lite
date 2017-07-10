@@ -702,6 +702,9 @@ struct node_active_region {
 #ifndef CONFIG_DISCONTIGMEM
 /* The array of struct pages - for discontigmem use pgdat->lmem_map */
 extern struct page *mem_map;
+#ifdef CONFIG_MTK_MEMCFG
+extern unsigned long mem_map_size;
+#endif
 #endif
 
 /*
@@ -724,6 +727,9 @@ typedef struct pglist_data {
 	struct page *node_mem_map;
 #ifdef CONFIG_MEMCG
 	struct page_cgroup *node_page_cgroup;
+#endif
+#ifdef CONFIG_PAGE_EXTENSION
+	struct page_ext *node_page_ext;
 #endif
 #endif
 #ifndef CONFIG_NO_BOOTMEM
@@ -1102,6 +1108,14 @@ struct mem_section {
 	 * section. (see memcontrol.h/page_cgroup.h about this.)
 	 */
 	struct page_cgroup *page_cgroup;
+	unsigned long pad;
+#endif
+#ifdef CONFIG_PAGE_EXTENSION
+	/*
+	 * If !SPARSEMEM, pgdat doesn't have page_ext pointer. We use
+	 * section. (see page_ext.h about this.)
+	 */
+	struct page_ext *page_ext;
 	unsigned long pad;
 #endif
 	/*

@@ -441,7 +441,11 @@ static struct clocksource clocksource_counter = {
 	.rating	= 400,
 	.read	= arch_counter_read,
 	.mask	= CLOCKSOURCE_MASK(56),
+#ifdef CONFIG_ARM_ARCH_TIMER_SUSPEND_NONSTOP
 	.flags	= CLOCK_SOURCE_IS_CONTINUOUS | CLOCK_SOURCE_SUSPEND_NONSTOP,
+#else
+	.flags	= CLOCK_SOURCE_IS_CONTINUOUS,
+#endif
 };
 
 static struct cyclecounter cyclecounter = {
@@ -703,6 +707,14 @@ static void __init arch_timer_init(struct device_node *np)
 	for (i = PHYS_SECURE_PPI; i < MAX_TIMER_PPI; i++)
 		arch_timer_ppi[i] = irq_of_parse_and_map(np, i);
 	arch_timer_detect_rate(NULL, np);
+
+	/*
+	 * If we cannot rely on firmware initializing the timer registers then
+	 * we should use the physical timers instead.
+	 */
+	if (IS_ENABLED(CONFIG_ARM) &&
+	    of_property_read_bool(np, "arm,cpu-registers-not-fw-configured"))
+			arch_timer_use_virtual = false;
 
 	/*
 	 * If HYP mode is available, we know that the physical timer

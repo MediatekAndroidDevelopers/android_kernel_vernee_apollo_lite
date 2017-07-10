@@ -11,6 +11,9 @@
 /*
  * This handles all read/write requests to block devices
  */
+#if defined(CONFIG_MT_ENG_BUILD)
+#define DEBUG 1
+#endif
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/backing-dev.h>
@@ -47,6 +50,9 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_split);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_unplug);
 
 DEFINE_IDA(blk_queue_ida);
+
+int trap_non_toi_io;
+EXPORT_SYMBOL_GPL(trap_non_toi_io);
 
 /*
  * For the allocated request tables
@@ -1931,6 +1937,9 @@ void submit_bio(int rw, struct bio *bio)
 {
 	bio->bi_rw |= rw;
 
+	if (unlikely(trap_non_toi_io))
+		BUG_ON(!(bio->bi_flags & BIO_TOI));
+
 	/*
 	 * If it's a regular read/write or a barrier with data attached,
 	 * go through the normal accounting stuff before submission.
@@ -1949,6 +1958,8 @@ void submit_bio(int rw, struct bio *bio)
 			task_io_account_read(bio->bi_iter.bi_size);
 			count_vm_events(PGPGIN, count);
 		}
+
+		mt_pidlog_submit_bio(bio);
 
 		if (unlikely(block_dump)) {
 			char b[BDEVNAME_SIZE];
@@ -3324,3 +3335,4 @@ int __init blk_dev_init(void)
 
 	return 0;
 }
+

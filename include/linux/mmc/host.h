@@ -12,6 +12,7 @@
 
 #include <linux/leds.h>
 #include <linux/mutex.h>
+#include <linux/timer.h>
 #include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/fault-inject.h>
@@ -154,12 +155,30 @@ struct device;
 
 struct mmc_async_req {
 	/* active mmc request */
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+	struct mmc_request	*mrq_que;
+#endif
 	struct mmc_request	*mrq;
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+	bool cmdq_en;
+#endif
 	/*
 	 * Check error status of completed mmc request.
 	 * Returns 0 if success otherwise non zero.
 	 */
 	int (*err_check) (struct mmc_card *, struct mmc_async_req *);
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+#define MMC_QUEUE_BEFORE_ENQ			(0)	/* mrq is entered in driver */
+#define MMC_QUEUE_ENQ					(1)	/* mrq is enqueued in device */
+#define MMC_QUEUE_BEFORE_QRDY			(2)	/* mrq is 44/45 issue & wait for qrdy */
+#define MMC_QUEUE_BEFORE_TRAN			(3)	/* mrq is checking qrdy & ready to transfer */
+#define MMC_QUEUE_TRAN					(4)	/* mrq is transfer */
+#define MMC_QUEUE_BUSY					(5) /* mrq is transfer done & cheking busy in case of write */
+#define MMC_QUEUE_BEFORE_POST			(7) /* mrq is terminated transfer
+									including busy check & ready to post process */
+	unsigned long		state;
+	unsigned int		prio;
+#endif
 };
 
 /**
@@ -196,6 +215,11 @@ struct mmc_context_info {
 	spinlock_t		lock;
 };
 
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+#define EMMC_MAX_QUEUE_DEPTH		(32)
+#define EMMC_MIN_RT_CLASS_TAG_COUNT	(4)
+#define TASK_READY_TMO			(30 * HZ) /* 30s */
+#endif
 struct regulator;
 
 struct mmc_supply {
@@ -326,9 +350,17 @@ struct mmc_host {
 #ifdef CONFIG_MMC_DEBUG
 	unsigned int		removed:1;	/* host is being removed */
 #endif
+	unsigned int		can_retune:1;	/* re-tuning can be used */
+	unsigned int		doing_retune:1;	/* re-tuning in progress */
+	unsigned int		retune_now:1;	/* do re-tuning at next req */
 
 	int			rescan_disable;	/* disable card detection */
 	int			rescan_entered;	/* used with nonremovable devices */
+
+	int			need_retune;	/* re-tuning is needed */
+	int			hold_retune;	/* hold off re-tuning */
+	unsigned int		retune_period;	/* re-tuning period in secs */
+	struct timer_list	retune_timer;	/* for periodic re-tuning */
 
 	bool			trigger_card_event; /* card_event necessary */
 
@@ -364,6 +396,49 @@ struct mmc_host {
 	struct mmc_async_req	*areq;		/* active async req */
 	struct mmc_context_info	context_info;	/* async synchronization info */
 
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+	struct mmc_async_req	*areq_que[EMMC_MAX_QUEUE_DEPTH];
+	struct mmc_async_req	*areq_cur;
+	atomic_t		areq_cnt;
+	unsigned long		task_queue_time[EMMC_MAX_QUEUE_DEPTH];
+	spinlock_t		cmd_que_lock;
+	spinlock_t		dat_que_lock;
+	spinlock_t		que_lock;
+	struct list_head	cmd_que;
+	struct list_head	dat_que;
+
+	unsigned long		state;
+	wait_queue_head_t	cmp_que;
+	struct mmc_request	*done_mrq;
+	struct mmc_command	chk_cmd;
+	struct mmc_request	chk_mrq;
+	struct mmc_command	que_cmd;
+	struct mmc_request	que_mrq;
+	struct mmc_command	deq_cmd;
+	struct mmc_request	deq_mrq;
+
+	struct mmc_queue_req	*mqrq_cur;
+	struct mmc_queue_req	*mqrq_prev;
+	struct mmc_request	*prev_mrq;
+
+	struct task_struct	*cmdq_thread;
+
+	atomic_t		cq_rw;
+	atomic_t		cq_w;
+	unsigned int	wp_error;
+	atomic_t		cq_wait_rdy;
+	atomic_t		cq_rdy_cnt;
+	unsigned long	task_id_index;
+	int				cur_rw_task;
+	volatile int		is_data_dma;
+	atomic_t		cq_tuning_now;
+#ifdef CONFIG_MMC_FFU
+	atomic_t		stop_queue;
+#endif
+	unsigned int	data_mrq_queued[32];
+	unsigned int	cmdq_support_changed;
+	int			align_size;
+#endif
 #ifdef CONFIG_FAIL_MMC_REQUEST
 	struct fault_attr	fail_mmc_request;
 #endif
@@ -375,6 +450,15 @@ struct mmc_host {
 	int			dsr_req;	/* DSR value is valid */
 	u32			dsr;	/* optional driver stage (DSR) value */
 
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
+	struct {
+		struct sdio_cis			*cis;
+		struct sdio_cccr		*cccr;
+		struct sdio_embedded_func	*funcs;
+		int				num_funcs;
+	} embedded_sdio_data;
+#endif
+
 	unsigned long		private[0] ____cacheline_aligned;
 };
 
@@ -383,6 +467,14 @@ int mmc_add_host(struct mmc_host *);
 void mmc_remove_host(struct mmc_host *);
 void mmc_free_host(struct mmc_host *);
 int mmc_of_parse(struct mmc_host *host);
+
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
+extern void mmc_set_embedded_sdio_data(struct mmc_host *host,
+				       struct sdio_cis *cis,
+				       struct sdio_cccr *cccr,
+				       struct sdio_embedded_func *funcs,
+				       int num_funcs);
+#endif
 
 static inline void *mmc_priv(struct mmc_host *host)
 {
@@ -400,6 +492,12 @@ int mmc_power_restore_host(struct mmc_host *host);
 
 void mmc_detect_change(struct mmc_host *, unsigned long delay);
 void mmc_request_done(struct mmc_host *, struct mmc_request *);
+
+#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
+void mmc_handle_queued_request(struct mmc_host *host);
+int mmc_blk_end_queued_req(struct mmc_host *host,
+	struct mmc_async_req *areq, int index, int status);
+#endif
 
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
@@ -516,6 +614,20 @@ static inline bool mmc_card_ddr52(struct mmc_card *card)
 static inline bool mmc_card_hs400(struct mmc_card *card)
 {
 	return card->host->ios.timing == MMC_TIMING_MMC_HS400;
+}
+
+void mmc_retune_timer_stop(struct mmc_host *host);
+
+static inline void mmc_retune_needed(struct mmc_host *host)
+{
+	if (host->can_retune)
+		host->need_retune = 1;
+}
+
+static inline void mmc_retune_recheck(struct mmc_host *host)
+{
+	if (host->hold_retune <= 1)
+		host->retune_now = 1;
 }
 
 #endif /* LINUX_MMC_HOST_H */

@@ -1,0 +1,30 @@
+#
+#Fingerprint
+#
+menu "Fingerprint support"
+	depends on INPUT
+
+config MTK_FINGERPRINT_SUPPORT
+	bool "Mediatek Fingerprint"
+	default n
+	---help---
+	Fingerprint mtk driver enable/disable in the kernel.
+	Say Y here if you want to use mediatek fingerprint driver,
+	fingerprint driver will support fingerprint function
+
+if MTK_FINGERPRINT_SUPPORT
+config MTK_FINGERPRINT_SELECT
+	string "sensor type"
+	default "ET310"
+
+if MTK_FINGERPRINT_SELECT = "ET310"
+config MTK_ET310
+        bool "ET310 for MediaTek package"
+        default n
+endif
+
+config NB_FINGER_CLEAR_SUPPORT
+        bool "NB FINGER CLEAR SUPPORT"
+        default n
+endif
+endmenu

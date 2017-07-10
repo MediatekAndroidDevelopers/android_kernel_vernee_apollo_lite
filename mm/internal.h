@@ -141,6 +141,18 @@ extern bool is_free_buddy_page(struct page *page);
 #endif
 extern int user_min_free_kbytes;
 
+#ifdef CONFIG_CMA
+static inline int is_cma_page(struct page *page)
+{
+	unsigned mt = get_pageblock_migratetype(page);
+	if (mt == MIGRATE_ISOLATE || mt == MIGRATE_CMA)
+		return true;
+	return false;
+}
+#else
+#define is_cma_page(page) 0
+#endif
+
 #if defined CONFIG_COMPACTION || defined CONFIG_CMA
 
 /*
@@ -375,6 +387,12 @@ static inline void mminit_validate_memmodel_limits(unsigned long *start_pfn,
 }
 #endif /* CONFIG_SPARSEMEM */
 
+#if defined(CONFIG_ANDROID_LOW_MEMORY_KILLER) && defined(CONFIG_MTK_GMO_RAM_OPTIMIZE)
+/* #define LOGTAG "VMSCAN" */
+
+extern int lowmem_minfree[9];
+#endif
+
 #define ZONE_RECLAIM_NOSCAN	-2
 #define ZONE_RECLAIM_FULL	-1
 #define ZONE_RECLAIM_SOME	0
@@ -411,4 +429,11 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
 #define ALLOC_FAIR		0x100 /* fair zone allocation */
 
+#ifdef CONFIG_MTK_ION
+extern void ion_mm_heap_memory_detail(void);
+#endif
+
+#ifdef CONFIG_MTK_GPU_SUPPORT
+extern bool mtk_dump_gpu_memory_usage(void);
+#endif
 #endif	/* __MM_INTERNAL_H */

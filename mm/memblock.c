@@ -58,6 +58,24 @@ static int memblock_can_resize __initdata_memblock;
 static int memblock_memory_in_slab __initdata_memblock = 0;
 static int memblock_reserved_in_slab __initdata_memblock = 0;
 
+#ifdef CONFIG_MTK_MEMCFG
+struct memblock_record memblock_record[MAX_MEMBLOCK_RECORD];
+struct memblock_stack_trace memblock_stack_trace[MAX_MEMBLOCK_RECORD];
+int memblock_reserve_count;
+
+inline void init_memblock_stack_trace(struct memblock_stack_trace *mst,
+		struct stack_trace *trace, unsigned long size, int skip)
+{
+	memset(mst->addrs, 0, MAX_MEMBLOCK_TRACK_DEPTH);
+	mst->size = size;
+	mst->merge = 0;
+	trace->nr_entries = 0;
+	trace->max_entries = MAX_MEMBLOCK_TRACK_DEPTH;
+	trace->skip = skip;
+	trace->entries = mst->addrs;
+}
+#endif
+
 /* inline so we don't get a warning when pr_debug is compiled out */
 static __init_memblock const char *
 memblock_type_name(struct memblock_type *type)
@@ -679,6 +697,7 @@ int __init_memblock memblock_remove_range(struct memblock_type *type,
 
 int __init_memblock memblock_remove(phys_addr_t base, phys_addr_t size)
 {
+	kmemleak_free_part(__va(base), size); /* kmemleak free for overlaps issue */
 	return memblock_remove_range(&memblock.memory, base, size);
 }
 
@@ -705,6 +724,26 @@ static int __init_memblock memblock_reserve_region(phys_addr_t base,
 		     (unsigned long long)base,
 		     (unsigned long long)base + size - 1,
 		     flags, (void *)_RET_IP_);
+
+#ifdef CONFIG_MTK_MEMCFG
+	if (memblock_reserve_count < MAX_MEMBLOCK_RECORD) {
+		struct stack_trace trace;
+
+		memblock_record[memblock_reserve_count].base = base;
+		memblock_record[memblock_reserve_count].end = base + size - 1;
+		memblock_record[memblock_reserve_count].size = size;
+		memblock_record[memblock_reserve_count].flags = flags;
+		memblock_record[memblock_reserve_count].ip = (unsigned long) _RET_IP_;
+
+		init_memblock_stack_trace(&memblock_stack_trace[memblock_reserve_count],
+				&trace, (unsigned long)size, 0);
+
+		save_stack_trace_tsk(current, &trace);
+		memblock_stack_trace[memblock_reserve_count].count =
+			trace.nr_entries;
+	}
+	memblock_reserve_count++;
+#endif
 
 	return memblock_add_range(_rgn, base, size, nid, flags);
 }

@@ -174,6 +174,13 @@ struct ufshcd_lrb {
 	int task_tag;
 	u8 lun; /* UPIU LUN id field is only 8-bit wide */
 	bool intr_cmd;
+
+#ifdef CONFIG_MTK_UFS_HW_CRYPTO
+	u32 crypto_en;
+	u32 crypto_cfgid;
+	u32 crypto_dunl;
+	u32 crypto_dunu;
+#endif
 };
 
 /**
@@ -416,7 +423,6 @@ struct ufs_hba {
 	unsigned int irq;
 	bool is_irq_enabled;
 
-
 	wait_queue_head_t tm_wq;
 	wait_queue_head_t tm_tag_wq;
 	unsigned long tm_condition;
@@ -473,6 +479,12 @@ struct ufs_hba {
 	struct devfreq *devfreq;
 	struct ufs_clk_scaling clk_scaling;
 	bool is_sys_suspended;
+
+#ifdef CONFIG_MTK_UFS_BOOTING
+	u32 manu_id;               /* record vendor id for vendor-specific configurations */
+	unsigned int quirks;
+	unsigned int dev_quirks;
+#endif
 };
 
 /* Returns true if clocks can be gated. Otherwise false */
@@ -516,6 +528,7 @@ static inline void ufshcd_rmwl(struct ufs_hba *hba, u32 mask, u32 val, u32 reg)
 }
 
 int ufshcd_alloc_host(struct device *, struct ufs_hba **);
+void ufshcd_dealloc_host(struct ufs_hba *);
 int ufshcd_init(struct ufs_hba * , void __iomem * , unsigned int);
 void ufshcd_remove(struct ufs_hba *);
 
@@ -593,4 +606,33 @@ static inline int ufshcd_dme_peer_get(struct ufs_hba *hba,
 
 int ufshcd_hold(struct ufs_hba *hba, bool async);
 void ufshcd_release(struct ufs_hba *hba);
+
+#ifdef CONFIG_MTK_UFS_BOOTING
+void  ufshcd_enable_intr(struct ufs_hba *hba, u32 intrs);
+int   ufshcd_get_req_rsp(struct utp_upiu_rsp *ucd_rsp_ptr);
+int   ufshcd_get_rsp_upiu_result(struct utp_upiu_rsp *ucd_rsp_ptr);
+int   ufshcd_get_tr_ocs(struct ufshcd_lrb *lrbp);
+int   ufshcd_query_attr(struct ufs_hba *hba,
+							enum query_opcode opcode,
+							enum attr_idn idn,
+							u8 index,
+							u8 selector,
+							u32 *attr_val);
+int   ufshcd_query_flag(struct ufs_hba *hba, enum query_opcode opcode, enum flag_idn idn, bool *flag_res);
+int   ufshcd_query_descriptor(struct ufs_hba *hba,
+							enum query_opcode opcode,
+							enum desc_idn idn,
+							u8 index,
+							u8 selector,
+							u8 *desc_buf,
+							int *buf_len);
+int   ufshcd_read_device_desc(struct ufs_hba *hba, u8 *buf, u32 size);
+int   ufshcd_read_desc(struct ufs_hba *hba, enum desc_idn desc_id, int desc_index, u8 *buf, u32 size);
+int   ufshcd_read_string_desc(struct ufs_hba *hba, int desc_index, u8 *buf, u32 size, bool ascii);
+void  ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag);
+int   ufshcd_send_uic_cmd(struct ufs_hba *hba, struct uic_command *uic_cmd);
+int   ufshcd_uic_change_pwr_mode(struct ufs_hba *hba, u8 mode);
+void  ufshcd_utrl_clear(struct ufs_hba *hba, u32 pos);
+#endif
+
 #endif /* End of Header */

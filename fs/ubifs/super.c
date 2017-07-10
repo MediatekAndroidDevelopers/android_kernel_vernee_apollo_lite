@@ -38,12 +38,21 @@
 #include <linux/writeback.h>
 #include "ubifs.h"
 
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+void *ubifs_sbuf = NULL;
+DEFINE_MUTEX(ubifs_sbuf_mutex);
+atomic_long_t ubifs_sbuf_lock_count;
+#endif
 /*
  * Maximum amount of memory we may 'kmalloc()' without worrying that we are
  * allocating too much.
  */
 #define UBIFS_KMALLOC_OK (128*1024)
 
+/*sync() when free size less than*/
+#define UFIFS_FREE_SIZE_SYNC_TH (10*1024*1024)
+static int ubifs_sync_fs(struct super_block *sb, int wait);
+/**/
 /* Slab cache for UBIFS inodes */
 struct kmem_cache *ubifs_inode_slab;
 
@@ -155,9 +164,6 @@ struct inode *ubifs_iget(struct super_block *sb, unsigned long inum)
 	err = validate_inode(c, inode);
 	if (err)
 		goto out_invalid;
-
-	/* Disable read-ahead */
-	inode->i_mapping->backing_dev_info = &c->bdi;
 
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFREG:
@@ -276,6 +282,7 @@ static void ubifs_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
 	struct ubifs_inode *ui = ubifs_inode(inode);
+
 	kmem_cache_free(ubifs_inode_slab, ui);
 }
 
@@ -300,7 +307,8 @@ static int ubifs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	if (is_bad_inode(inode))
 		return 0;
 
-	mutex_lock(&ui->ui_mutex);
+	if (mutex_trylock(&ui->ui_mutex) == 0)
+		return 0;
 	/*
 	 * Due to races between write-back forced by budgeting
 	 * (see 'sync_some_inodes()') and background write-back, the inode may
@@ -397,10 +405,15 @@ static int ubifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct ubifs_info *c = dentry->d_sb->s_fs_info;
 	unsigned long long free;
 	__le32 *uuid = (__le32 *)c->uuid;
+	unsigned long long free_size_th = UFIFS_FREE_SIZE_SYNC_TH;
 
 	free = ubifs_get_free_space(c);
 	dbg_gen("free space %lld bytes (%lld blocks)",
 		free, free >> UBIFS_BLOCK_SHIFT);
+	if (free <= free_size_th && c->ro_mount == 0) {
+		ubifs_sync_fs(dentry->d_sb, 1);
+		free = ubifs_get_free_space(c);
+	}
 
 	buf->f_type = UBIFS_SUPER_MAGIC;
 	buf->f_bsize = UBIFS_BLOCK_SIZE;
@@ -411,7 +424,9 @@ static int ubifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	else
 		buf->f_bavail = 0;
 	buf->f_files = 0;
-	buf->f_ffree = 0;
+	spin_lock(&c->cnt_lock);
+	buf->f_ffree = INUM_WATERMARK - c->highest_inum;
+	spin_unlock(&c->cnt_lock);
 	buf->f_namelen = UBIFS_MAX_NLEN;
 	buf->f_fsid.val[0] = le32_to_cpu(uuid[0]) ^ le32_to_cpu(uuid[2]);
 	buf->f_fsid.val[1] = le32_to_cpu(uuid[1]) ^ le32_to_cpu(uuid[3]);
@@ -862,8 +877,9 @@ static void free_orphans(struct ubifs_info *c)
 		kfree(orph);
 		ubifs_err("orphan list not empty at unmount");
 	}
-
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->orph_buf);
+#endif
 	c->orph_buf = NULL;
 }
 
@@ -1191,12 +1207,24 @@ static int mount_ubifs(struct ubifs_info *c)
 	if (!c->bottom_up_buf)
 		goto out_free;
 
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+	if (ubifs_sbuf == NULL) {
+		ubifs_sbuf = vmalloc(c->leb_size);
+		mutex_init(&ubifs_sbuf_mutex);
+	}
+	c->sbuf = ubifs_sbuf;
+#else
 	c->sbuf = vmalloc(c->leb_size);
+#endif
 	if (!c->sbuf)
 		goto out_free;
 
 	if (!c->ro_mount) {
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		c->ileb_buf = c->sbuf;
+#else
 		c->ileb_buf = vmalloc(c->leb_size);
+#endif
 		if (!c->ileb_buf)
 			goto out_free;
 	}
@@ -1272,7 +1300,18 @@ static int mount_ubifs(struct ubifs_info *c)
 	}
 
 	if (c->need_recovery && !c->ro_mount) {
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		if (mutex_trylock(&ubifs_sbuf_mutex) == 0) {
+			atomic_long_inc(&ubifs_sbuf_lock_count);
+			ubifs_err("trylock fail count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+			mutex_lock(&ubifs_sbuf_mutex);
+			ubifs_err("locked count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+		}
+#endif
 		err = ubifs_recover_inl_heads(c, c->sbuf);
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		mutex_unlock(&ubifs_sbuf_mutex);
+#endif
 		if (err)
 			goto out_master;
 	}
@@ -1287,7 +1326,7 @@ static int mount_ubifs(struct ubifs_info *c)
 			goto out_lpt;
 	}
 
-	if (!c->ro_mount) {
+	if (!c->ro_mount && !c->need_recovery) {
 		/*
 		 * Set the "dirty" flag so that if we reboot uncleanly we
 		 * will notice this immediately on the next mount.
@@ -1488,8 +1527,10 @@ out_cbuf:
 out_free:
 	kfree(c->write_reserve_buf);
 	kfree(c->bu.buf);
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
+#endif
 	kfree(c->bottom_up_buf);
 	ubifs_debugging_exit(c);
 	return err;
@@ -1527,8 +1568,10 @@ static void ubifs_umount(struct ubifs_info *c)
 	kfree(c->mst_node);
 	kfree(c->write_reserve_buf);
 	kfree(c->bu.buf);
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
+#endif
 	kfree(c->bottom_up_buf);
 	ubifs_debugging_exit(c);
 }
@@ -1591,10 +1634,32 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 		err = ubifs_recover_size(c);
 		if (err)
 			goto out;
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		if (mutex_trylock(&ubifs_sbuf_mutex) == 0) {
+			atomic_long_inc(&ubifs_sbuf_lock_count);
+			ubifs_err("trylock fail count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+			mutex_lock(&ubifs_sbuf_mutex);
+			ubifs_err("locked count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+		}
+#endif
 		err = ubifs_clean_lebs(c, c->sbuf);
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		mutex_unlock(&ubifs_sbuf_mutex);
+#endif
 		if (err)
 			goto out;
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		if (mutex_trylock(&ubifs_sbuf_mutex) == 0) {
+			atomic_long_inc(&ubifs_sbuf_lock_count);
+			ubifs_err("trylock fail count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+			mutex_lock(&ubifs_sbuf_mutex);
+			ubifs_err("locked count %ld\n", atomic_long_read(&ubifs_sbuf_lock_count));
+		}
+#endif
 		err = ubifs_recover_inl_heads(c, c->sbuf);
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+		mutex_unlock(&ubifs_sbuf_mutex);
+#endif
 		if (err)
 			goto out;
 	} else {
@@ -1612,7 +1677,11 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 			goto out;
 	}
 
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+	c->ileb_buf = c->sbuf;
+#else
 	c->ileb_buf = vmalloc(c->leb_size);
+#endif
 	if (!c->ileb_buf) {
 		err = -ENOMEM;
 		goto out;
@@ -1639,7 +1708,11 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 	}
 	wake_up_process(c->bgt);
 
+#ifdef CONFIG_UBIFS_SHARE_BUFFER
+	c->orph_buf = c->sbuf;
+#else
 	c->orph_buf = vmalloc(c->leb_size);
+#endif
 	if (!c->orph_buf) {
 		err = -ENOMEM;
 		goto out;
@@ -1687,7 +1760,9 @@ static int ubifs_remount_rw(struct ubifs_info *c)
 
 out:
 	c->ro_mount = 1;
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->orph_buf);
+#endif
 	c->orph_buf = NULL;
 	if (c->bgt) {
 		kthread_stop(c->bgt);
@@ -1696,7 +1771,9 @@ out:
 	free_wbufs(c);
 	kfree(c->write_reserve_buf);
 	c->write_reserve_buf = NULL;
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->ileb_buf);
+#endif
 	c->ileb_buf = NULL;
 	ubifs_lpt_free(c, 1);
 	c->remounting_rw = 0;
@@ -1736,11 +1813,15 @@ static void ubifs_remount_ro(struct ubifs_info *c)
 	if (err)
 		ubifs_ro_mode(c, err);
 
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->orph_buf);
+#endif
 	c->orph_buf = NULL;
 	kfree(c->write_reserve_buf);
 	c->write_reserve_buf = NULL;
+#ifndef CONFIG_UBIFS_SHARE_BUFFER
 	vfree(c->ileb_buf);
+#endif
 	c->ileb_buf = NULL;
 	ubifs_lpt_free(c, 1);
 	c->ro_mount = 1;
@@ -1859,6 +1940,7 @@ static int ubifs_remount_fs(struct super_block *sb, int *flags, char *data)
 			return -EROFS;
 		}
 		ubifs_remount_ro(c);
+		ubi_flush_all(c->ubi);
 	}
 
 	if (c->bulk_read == 1)
@@ -2017,7 +2099,7 @@ static int ubifs_fill_super(struct super_block *sb, void *data, int silent)
 	 * Read-ahead will be disabled because @c->bdi.ra_pages is 0.
 	 */
 	c->bdi.name = "ubifs",
-	c->bdi.capabilities = BDI_CAP_MAP_COPY;
+	c->bdi.capabilities = 0;
 	err  = bdi_init(&c->bdi);
 	if (err)
 		goto out_close;
@@ -2247,7 +2329,9 @@ static int __init ubifs_init(void)
 	if (!ubifs_inode_slab)
 		return -ENOMEM;
 
-	register_shrinker(&ubifs_shrinker_info);
+	err = register_shrinker(&ubifs_shrinker_info);
+	if (err)
+		goto out_slab;
 
 	err = ubifs_compressors_init();
 	if (err)
@@ -2270,6 +2354,7 @@ out_compr:
 	ubifs_compressors_exit();
 out_shrinker:
 	unregister_shrinker(&ubifs_shrinker_info);
+out_slab:
 	kmem_cache_destroy(ubifs_inode_slab);
 	return err;
 }

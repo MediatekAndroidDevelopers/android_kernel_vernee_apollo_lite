@@ -2,6 +2,7 @@
 # Makefile for RTC class/drivers.
 #
 
+subdir-ccflags-y += -Werror
 ccflags-$(CONFIG_RTC_DEBUG)	:= -DDEBUG
 
 obj-$(CONFIG_RTC_LIB)		+= rtc-lib.o
@@ -149,3 +150,4 @@ obj-$(CONFIG_RTC_DRV_X1205)	+= rtc-x1205.o
 obj-$(CONFIG_RTC_DRV_XGENE)	+= rtc-xgene.o
 obj-$(CONFIG_RTC_DRV_SIRFSOC)	+= rtc-sirfsoc.o
 obj-$(CONFIG_RTC_DRV_MOXART)	+= rtc-moxart.o
+obj-$(CONFIG_RTC_DRV_MT6397)	+= rtc-mt6397.o

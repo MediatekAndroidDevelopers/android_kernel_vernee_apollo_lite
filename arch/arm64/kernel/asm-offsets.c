@@ -40,6 +40,8 @@ int main(void)
   DEFINE(TI_TASK,		offsetof(struct thread_info, task));
   DEFINE(TI_EXEC_DOMAIN,	offsetof(struct thread_info, exec_domain));
   DEFINE(TI_CPU,		offsetof(struct thread_info, cpu));
+  DEFINE(TI_CPU_EXCP,		offsetof(struct thread_info, cpu_excp));
+  DEFINE(TI_REGS_ON_EXCP,	offsetof(struct thread_info, regs_on_excp));
   BLANK();
   DEFINE(THREAD_CPU_CONTEXT,	offsetof(struct task_struct, thread.cpu_context));
   BLANK();
@@ -51,6 +53,11 @@ int main(void)
   DEFINE(S_X5,			offsetof(struct pt_regs, regs[5]));
   DEFINE(S_X6,			offsetof(struct pt_regs, regs[6]));
   DEFINE(S_X7,			offsetof(struct pt_regs, regs[7]));
+#ifdef CONFIG_MTK_COMPAT
+	DEFINE(S_X15,			offsetof(struct pt_regs, regs[15]));
+	DEFINE(S_X16,			offsetof(struct pt_regs, regs[16]));
+	DEFINE(S_X29,			offsetof(struct pt_regs, regs[29]));
+#endif
   DEFINE(S_LR,			offsetof(struct pt_regs, regs[30]));
   DEFINE(S_SP,			offsetof(struct pt_regs, sp));
 #ifdef CONFIG_COMPAT

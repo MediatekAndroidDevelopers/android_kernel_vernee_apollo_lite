@@ -29,11 +29,14 @@
 #include <asm/prom.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
+#include <asm/system_info.h>
 #include <asm/tlb.h>
 #include <asm/fixmap.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <mt-plat/mrdump.h>
+#include <mt-plat/mtk_meminfo.h>
 
 #include "mm.h"
 
@@ -186,6 +189,15 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max_low,
 {
 	unsigned long zone_size[MAX_NR_ZONES], zhole_size[MAX_NR_ZONES];
 	struct memblock_region *reg;
+	unsigned long highmem_high;
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+	phys_addr_t cma_base, cma_size;
+	unsigned long cma_base_pfn = ULONG_MAX;
+
+	cma_get_range(&cma_base, &cma_size);
+	if (cma_size)
+		cma_base_pfn = PFN_DOWN(cma_base);
+#endif
 
 	/*
 	 * initialise the zones.
@@ -198,8 +210,20 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max_low,
 	 * to the zones, now is the time to do it.
 	 */
 	zone_size[0] = max_low - min;
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+	highmem_high = cma_base_pfn;
+	zone_size[ZONE_MOVABLE] = max_high - highmem_high;
+#else
+	highmem_high = max_high;
+#endif
+
 #ifdef CONFIG_HIGHMEM
-	zone_size[ZONE_HIGHMEM] = max_high - max_low;
+	if (highmem_high > max_low) {
+		zone_size[ZONE_HIGHMEM] = highmem_high - max_low;
+	} else if (highmem_high > min) {
+		max_low = highmem_high;
+		zone_size[0] = max_low - min;
+	}
 #endif
 
 	/*
@@ -216,9 +240,18 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max_low,
 			zhole_size[0] -= low_end - start;
 		}
 #ifdef CONFIG_HIGHMEM
-		if (end > max_low) {
+		if (end > max_low && zhole_size[ZONE_HIGHMEM] > 0) {
 			unsigned long high_start = max(start, max_low);
-			zhole_size[ZONE_HIGHMEM] -= end - high_start;
+			unsigned long high_end = min(end, highmem_high);
+
+			zhole_size[ZONE_HIGHMEM] -= high_end - high_start;
+		}
+#endif
+#ifdef CONFIG_ZONE_MOVABLE_CMA
+		if (end > highmem_high) {
+			unsigned long high_start = max(start, highmem_high);
+
+			zhole_size[ZONE_MOVABLE] -= end - high_start;
 		}
 #endif
 	}
@@ -323,7 +356,7 @@ void __init arm_memblock_init(const struct machine_desc *mdesc)
 	 * must come from DMA area inside low memory
 	 */
 	dma_contiguous_reserve(arm_dma_limit);
-
+	mrdump_rsvmem();
 	arm_memblock_steal_permitted = false;
 	memblock_dump_all();
 }
@@ -570,7 +603,7 @@ void __init mem_init(void)
 			MLK(DTCM_OFFSET, (unsigned long) dtcm_end),
 			MLK(ITCM_OFFSET, (unsigned long) itcm_end),
 #endif
-			MLK(FIXADDR_START, FIXADDR_TOP),
+			MLK(FIXADDR_START, FIXADDR_END),
 			MLM(VMALLOC_START, VMALLOC_END),
 			MLM(PAGE_OFFSET, (unsigned long)high_memory),
 #ifdef CONFIG_HIGHMEM
@@ -615,7 +648,145 @@ void __init mem_init(void)
 	}
 }
 
-void free_initmem(void)
+#ifdef CONFIG_ARM_KERNMEM_PERMS
+struct section_perm {
+	unsigned long start;
+	unsigned long end;
+	pmdval_t mask;
+	pmdval_t prot;
+	pmdval_t clear;
+};
+
+static struct section_perm nx_perms[] = {
+	/* Make pages tables, etc before _stext RW (set NX). */
+	{
+		.start	= PAGE_OFFSET,
+		.end	= (unsigned long)_stext,
+		.mask	= ~PMD_SECT_XN,
+		.prot	= PMD_SECT_XN,
+	},
+	/* Make init RW (set NX). */
+	{
+		.start	= (unsigned long)__init_begin,
+		.end	= (unsigned long)_sdata,
+		.mask	= ~PMD_SECT_XN,
+		.prot	= PMD_SECT_XN,
+	},
+#ifdef CONFIG_DEBUG_RODATA
+	/* Make rodata NX (set RO in ro_perms below). */
+	{
+		.start  = (unsigned long)__start_rodata,
+		.end    = (unsigned long)_etext,
+		.mask   = ~PMD_SECT_XN,
+		.prot   = PMD_SECT_XN,
+	},
+#endif
+};
+
+#ifdef CONFIG_DEBUG_RODATA
+static struct section_perm ro_perms[] = {
+	/* Make kernel code and rodata RX (set RO). */
+	{
+		.start  = (unsigned long)_stext,
+		.end    = (unsigned long)_etext,
+#ifdef CONFIG_ARM_LPAE
+		.mask   = ~(L_PMD_SECT_RDONLY | L_PMD_SECT_AP2),
+		.prot   = L_PMD_SECT_RDONLY | L_PMD_SECT_AP2,
+#else
+		.mask   = ~(PMD_SECT_APX | PMD_SECT_AP_WRITE),
+		.prot   = PMD_SECT_APX | PMD_SECT_AP_WRITE,
+		.clear  = PMD_SECT_AP_WRITE,
+#endif
+	},
+};
+#endif
+
+/*
+ * Updates section permissions only for the current mm (sections are
+ * copied into each mm). During startup, this is the init_mm. Is only
+ * safe to be called with preemption disabled, as under stop_machine().
+ */
+static inline void section_update(unsigned long addr, pmdval_t mask,
+				  pmdval_t prot)
+{
+	struct mm_struct *mm;
+	pmd_t *pmd;
+
+	mm = current->active_mm;
+	pmd = pmd_offset(pud_offset(pgd_offset(mm, addr), addr), addr);
+
+#ifdef CONFIG_ARM_LPAE
+	pmd[0] = __pmd((pmd_val(pmd[0]) & mask) | prot);
+#else
+	if (addr & SECTION_SIZE)
+		pmd[1] = __pmd((pmd_val(pmd[1]) & mask) | prot);
+	else
+		pmd[0] = __pmd((pmd_val(pmd[0]) & mask) | prot);
+#endif
+	flush_pmd_entry(pmd);
+	local_flush_tlb_kernel_range(addr, addr + SECTION_SIZE);
+}
+
+/* Make sure extended page tables are in use. */
+static inline bool arch_has_strict_perms(void)
+{
+	if (cpu_architecture() < CPU_ARCH_ARMv6)
+		return false;
+
+	return !!(get_cr() & CR_XP);
+}
+
+#define set_section_perms(perms, field)	{				\
+	size_t i;							\
+	unsigned long addr;						\
+									\
+	if (!arch_has_strict_perms())					\
+		return;							\
+									\
+	for (i = 0; i < ARRAY_SIZE(perms); i++) {			\
+		if (!IS_ALIGNED(perms[i].start, SECTION_SIZE) ||	\
+		    !IS_ALIGNED(perms[i].end, SECTION_SIZE)) {		\
+			pr_err("BUG: section %lx-%lx not aligned to %lx\n", \
+				perms[i].start, perms[i].end,		\
+				SECTION_SIZE);				\
+			continue;					\
+		}							\
+									\
+		for (addr = perms[i].start;				\
+		     addr < perms[i].end;				\
+		     addr += SECTION_SIZE)				\
+			section_update(addr, perms[i].mask,		\
+				       perms[i].field);			\
+	}								\
+}
+
+static inline void fix_kernmem_perms(void)
+{
+	set_section_perms(nx_perms, prot);
+}
+
+#ifdef CONFIG_DEBUG_RODATA
+void mark_rodata_ro(void)
+{
+	set_section_perms(ro_perms, prot);
+}
+
+void set_kernel_text_rw(void)
+{
+	set_section_perms(ro_perms, clear);
+}
+
+void set_kernel_text_ro(void)
+{
+	set_section_perms(ro_perms, prot);
+}
+#endif /* CONFIG_DEBUG_RODATA */
+
+#else
+static inline void fix_kernmem_perms(void) { }
+#endif /* CONFIG_ARM_KERNMEM_PERMS */
+
+void free_tcmmem(void)
 {
 #ifdef CONFIG_HAVE_TCM
 	extern char __tcm_start, __tcm_end;
@@ -623,6 +794,12 @@ void free_initmem(void)
 	poison_init_mem(&__tcm_start, &__tcm_end - &__tcm_start);
 	free_reserved_area(&__tcm_start, &__tcm_end, -1, "TCM link");
 #endif
+}
+
+void free_initmem(void)
+{
+	fix_kernmem_perms();
+	free_tcmmem();
 
 	poison_init_mem(__init_begin, __init_end - __init_begin);
 	if (!machine_is_integrator() && !machine_is_cintegrator())

@@ -23,6 +23,7 @@
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 #include <linux/acpi.h>
+#include <linux/clk.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -984,6 +985,35 @@ static int rt5640_hp_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+static int rt5640_lout_event(struct snd_soc_dapm_widget *w,
+	struct snd_kcontrol *kcontrol, int event)
+{
+	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		hp_amp_power_on(codec);
+		snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
+			RT5640_PWR_LM, RT5640_PWR_LM);
+		snd_soc_update_bits(codec, RT5640_OUTPUT,
+			RT5640_L_MUTE | RT5640_R_MUTE, 0);
+		break;
+
+	case SND_SOC_DAPM_PRE_PMD:
+		snd_soc_update_bits(codec, RT5640_OUTPUT,
+			RT5640_L_MUTE | RT5640_R_MUTE,
+			RT5640_L_MUTE | RT5640_R_MUTE);
+		snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
+			RT5640_PWR_LM, 0);
+		break;
+
+	default:
+		return 0;
+	}
+
+	return 0;
+}
+
 static int rt5640_hp_power_event(struct snd_soc_dapm_widget *w,
 			   struct snd_kcontrol *kcontrol, int event)
 {
@@ -1179,12 +1209,15 @@ static const struct snd_soc_dapm_widget rt5640_dapm_widgets[] = {
 		0, rt5640_spo_l_mix, ARRAY_SIZE(rt5640_spo_l_mix)),
 	SND_SOC_DAPM_MIXER("SPOR MIX", SND_SOC_NOPM, 0,
 		0, rt5640_spo_r_mix, ARRAY_SIZE(rt5640_spo_r_mix)),
-	SND_SOC_DAPM_MIXER("LOUT MIX", RT5640_PWR_ANLG1, RT5640_PWR_LM_BIT, 0,
+	SND_SOC_DAPM_MIXER("LOUT MIX", SND_SOC_NOPM, 0, 0,
 		rt5640_lout_mix, ARRAY_SIZE(rt5640_lout_mix)),
 	SND_SOC_DAPM_SUPPLY_S("Improve HP Amp Drv", 1, SND_SOC_NOPM,
 		0, 0, rt5640_hp_power_event, SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_PGA_S("HP Amp", 1, SND_SOC_NOPM, 0, 0,
 		rt5640_hp_event,
+		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_PGA_S("LOUT amp", 1, SND_SOC_NOPM, 0, 0,
+		rt5640_lout_event,
 		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
 	SND_SOC_DAPM_SUPPLY("HP L Amp", RT5640_PWR_ANLG1,
 		RT5640_PWR_HP_L_BIT, 0, NULL, 0),
@@ -1500,8 +1533,10 @@ static const struct snd_soc_dapm_route rt5640_dapm_routes[] = {
 	{"HP R Playback", "Switch", "HP Amp"},
 	{"HPOL", NULL, "HP L Playback"},
 	{"HPOR", NULL, "HP R Playback"},
-	{"LOUTL", NULL, "LOUT MIX"},
-	{"LOUTR", NULL, "LOUT MIX"},
+
+	{"LOUT amp", NULL, "LOUT MIX"},
+	{"LOUTL", NULL, "LOUT amp"},
+	{"LOUTR", NULL, "LOUT amp"},
 };
 
 static const struct snd_soc_dapm_route rt5640_specific_dapm_routes[] = {
@@ -1867,8 +1902,25 @@ static int rt5640_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 			enum snd_soc_bias_level level)
 {
+	struct rt5640_priv *rt5640 = snd_soc_codec_get_drvdata(codec);
+
 	switch (level) {
+	case SND_SOC_BIAS_ON:
+		/* dev_err(codec->dev,"SND_SOC_BIAS_ON\n");*/
+		break;
+
+	case SND_SOC_BIAS_PREPARE:
+		/*dev_err(codec->dev,"SND_SOC_BIAS_PREPARE\n");*/
+		if (codec->dapm.bias_level != SND_SOC_BIAS_ON && !rt5640->mclk_on) {
+			clk_prepare_enable(rt5640->mclk);
+			rt5640->mclk_on = true;
+			/*dev_err(codec->dev,"clk_prepare_enable\n");*/
+		}
+		break;
+
+
 	case SND_SOC_BIAS_STANDBY:
+		/* dev_err(codec->dev,"SND_SOC_BIAS_STANDBY\n");*/
 		if (SND_SOC_BIAS_OFF == codec->dapm.bias_level) {
 			snd_soc_update_bits(codec, RT5640_PWR_ANLG1,
 				RT5640_PWR_VREF1 | RT5640_PWR_MB |
@@ -1887,6 +1939,7 @@ static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 		break;
 
 	case SND_SOC_BIAS_OFF:
+		/*dev_err(codec->dev,"SND_SOC_BIAS_OFF\n");*/
 		snd_soc_write(codec, RT5640_DEPOP_M1, 0x0004);
 		snd_soc_write(codec, RT5640_DEPOP_M2, 0x1100);
 		snd_soc_update_bits(codec, RT5640_DUMMY1, 0x1, 0);
@@ -1896,6 +1949,11 @@ static int rt5640_set_bias_level(struct snd_soc_codec *codec,
 		snd_soc_write(codec, RT5640_PWR_MIXER, 0x0000);
 		snd_soc_write(codec, RT5640_PWR_ANLG1, 0x0000);
 		snd_soc_write(codec, RT5640_PWR_ANLG2, 0x0000);
+		if (rt5640->mclk_on) {
+			clk_disable_unprepare(rt5640->mclk);
+			/*dev_err(codec->dev,"clk_disable_unprepare\n");*/
+			rt5640->mclk_on = false;
+		}
 		break;
 
 	default:
@@ -2136,6 +2194,9 @@ static int rt5640_parse_dt(struct rt5640_priv *rt5640, struct device_node *np)
 	rt5640->pdata.in2_diff = of_property_read_bool(np,
 					"realtek,in2-differential");
 
+	rt5640->pdata.dmic_en = of_property_read_bool(np,
+					"realtek,dmic-en");
+
 	rt5640->pdata.ldo1_en = of_get_named_gpio(np,
 					"realtek,ldo1-en-gpios", 0);
 	/*
@@ -2164,6 +2225,15 @@ static int rt5640_i2c_probe(struct i2c_client *i2c,
 				GFP_KERNEL);
 	if (NULL == rt5640)
 		return -ENOMEM;
+
+	rt5640->mclk = devm_clk_get(&i2c->dev, NULL);
+	if (IS_ERR(rt5640->mclk)) {
+		ret = PTR_ERR(rt5640->mclk);
+		dev_err(&i2c->dev, "Failed to get MCLK\n");
+		return ret;
+	}
+
+
 	i2c_set_clientdata(i2c, rt5640);
 
 	if (pdata) {

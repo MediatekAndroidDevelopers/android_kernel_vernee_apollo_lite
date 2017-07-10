@@ -36,6 +36,7 @@
 #include <asm/system_misc.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+#include <mt-plat/mtk_hooks.h>
 
 static const char *fault_name(unsigned int esr);
 
@@ -114,6 +115,10 @@ static void __do_user_fault(struct task_struct *tsk, unsigned long addr,
 			    struct pt_regs *regs)
 {
 	struct siginfo si;
+
+	if (mem_fault_debug_hook)
+		if (!mem_fault_debug_hook(regs))
+			return;
 
 	if (show_unhandled_signals && unhandled_signal(tsk, sig) &&
 	    printk_ratelimit()) {
@@ -457,6 +462,8 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 {
 	const struct fault_info *inf = fault_info + (esr & 63);
 	struct siginfo info;
+	unsigned long sctlr = 0;
+	struct mm_struct *mm = NULL;
 
 	if (!inf->fn(addr, esr, regs))
 		return;
@@ -464,6 +471,18 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	pr_alert("Unhandled fault: %s (0x%08x) at 0x%016lx\n",
 		 inf->name, esr, addr);
 
+	asm volatile(
+		"MRS %0, sctlr_el1\n\t"
+		: "=r"(sctlr)
+		:
+		:
+		);
+	pr_alert("SCTLR : %lx\n", sctlr);
+
+	if (addr < TASK_SIZE)
+		mm = current->mm;
+
+	show_pte(mm, addr);
 	info.si_signo = inf->sig;
 	info.si_errno = 0;
 	info.si_code  = inf->code;
@@ -509,6 +528,21 @@ void __init hook_debug_fault_code(int nr,
 	debug_fault_info[nr].code	= code;
 	debug_fault_info[nr].name	= name;
 }
+
+#ifdef CONFIG_MEDIATEK_SOLUTION
+void __init hook_fault_code(int nr,
+		int (*fn)(unsigned long, unsigned int, struct pt_regs *),
+		int sig, int code, const char *name)
+{
+	BUG_ON(nr < 0 || nr >= ARRAY_SIZE(fault_info));
+
+	fault_info[nr].fn   = fn;
+	fault_info[nr].sig  = sig;
+	fault_info[nr].code = code;
+	fault_info[nr].name = name;
+}
+#endif
+
 
 asmlinkage int __exception do_debug_exception(unsigned long addr,
 					      unsigned int esr,

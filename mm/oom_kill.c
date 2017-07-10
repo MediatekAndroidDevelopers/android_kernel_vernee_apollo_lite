@@ -39,6 +39,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
 
+#include "internal.h"
+
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
 int sysctl_oom_dump_tasks = 1;
@@ -402,6 +404,17 @@ static void dump_header(struct task_struct *p, gfp_t gfp_mask, int order,
 		show_mem(SHOW_MEM_FILTER_NODES);
 	if (sysctl_oom_dump_tasks)
 		dump_tasks(memcg, nodemask);
+
+	/* Show ION memory usage */
+	#ifdef CONFIG_MTK_ION
+	ion_mm_heap_memory_detail();
+	#endif
+
+	/* Show GPU memory usage */
+	#ifdef CONFIG_MTK_GPU_SUPPORT
+	if (mtk_dump_gpu_memory_usage() == false)
+		pr_warn("mtk_dump_gpu_memory_usage not support\n");
+	#endif
 }
 
 /*
@@ -467,6 +480,18 @@ void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	for_each_thread(p, t) {
 		list_for_each_entry(child, &t->children, sibling) {
 			unsigned int child_points;
+
+			/*M: add for race condition*/
+			if (p->flags & PF_EXITING) {
+				read_unlock(&tasklist_lock);
+				task_lock(p);
+				pr_err("%s: process %d (%s) is exiting\n",
+					message, task_pid_nr(p), p->comm);
+				task_unlock(p);
+				set_tsk_thread_flag(p, TIF_MEMDIE);
+				put_task_struct(p);
+				return;
+			}
 
 			if (child->mm == p->mm)
 				continue;

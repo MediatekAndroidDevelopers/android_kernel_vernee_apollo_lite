@@ -69,6 +69,12 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+#include <trace/events/pagemap.h>
+
+#ifdef CONFIG_MTK_EXTMEM
+#include <linux/exm_driver.h>
+#endif
+
 #include "internal.h"
 
 #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
@@ -79,6 +85,11 @@
 /* use the per-pgdat data instead for discontigmem - mbligh */
 unsigned long max_mapnr;
 struct page *mem_map;
+
+#ifdef CONFIG_MTK_MEMCFG
+unsigned long mem_map_size;
+EXPORT_SYMBOL(mem_map_size);
+#endif
 
 EXPORT_SYMBOL(max_mapnr);
 EXPORT_SYMBOL(mem_map);
@@ -1741,11 +1752,18 @@ int remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
 	 * un-COW'ed pages by matching them up with "vma->vm_pgoff".
 	 * See vm_normal_page() for details.
 	 */
+#ifdef CONFIG_MTK_EXTMEM
+	if (addr == vma->vm_start && end == vma->vm_end)
+		vma->vm_pgoff = pfn;
+	else if (is_cow_mapping(vma->vm_flags))
+		return -EINVAL;
+#else
 	if (is_cow_mapping(vma->vm_flags)) {
 		if (addr != vma->vm_start || end != vma->vm_end)
 			return -EINVAL;
 		vma->vm_pgoff = pfn;
 	}
+#endif
 
 	err = track_pfn_remap(vma, &prot, pfn, addr, PAGE_ALIGN(size));
 	if (err)
@@ -2025,7 +2043,7 @@ static int do_page_mkwrite(struct vm_area_struct *vma, struct page *page,
  */
 static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
-		spinlock_t *ptl, pte_t orig_pte)
+		spinlock_t *ptl, pte_t orig_pte, unsigned int flags)
 	__releases(ptl)
 {
 	struct page *old_page, *new_page = NULL;
@@ -2036,6 +2054,10 @@ static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	unsigned long mmun_start = 0;	/* For mmu_notifiers */
 	unsigned long mmun_end = 0;	/* For mmu_notifiers */
 	struct mem_cgroup *memcg;
+	gfp_t gfp = GFP_HIGHUSER_MOVABLE;
+
+	if (IS_ENABLED(CONFIG_CMA) && (flags & FAULT_FLAG_NO_CMA))
+		gfp &= ~__GFP_MOVABLE;
 
 	old_page = vm_normal_page(vma, address, orig_pte);
 	if (!old_page) {
@@ -2188,11 +2210,11 @@ gotten:
 		goto oom;
 
 	if (is_zero_pfn(pte_pfn(orig_pte))) {
-		new_page = alloc_zeroed_user_highpage_movable(vma, address);
+		new_page = alloc_zeroed_user_highpage(gfp, vma, address);
 		if (!new_page)
 			goto oom;
 	} else {
-		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+		new_page = alloc_page_vma(gfp | __GFP_CMA, vma, address);
 		if (!new_page)
 			goto oom;
 		cow_user_page(new_page, old_page, address, vma);
@@ -2432,6 +2454,9 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	delayacct_set_flag(DELAYACCT_PF_SWAPIN);
 	page = lookup_swap_cache(entry);
 	if (!page) {
+		/* Trace event for swap-in */
+		trace_mm_swap_op_rd(swp_type(entry));
+
 		page = swapin_readahead(entry,
 					GFP_HIGHUSER_MOVABLE, vma, address);
 		if (!page) {
@@ -2466,9 +2491,16 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 	if (!locked) {
+		/* Trace event for swap-in */
+		if (ret == VM_FAULT_MAJOR)
+			trace_mm_swap_op_rd_done(swp_type(entry));
 		ret |= VM_FAULT_RETRY;
 		goto out_release;
 	}
+
+	/* Trace event for swap-in */
+	if (ret == VM_FAULT_MAJOR)
+		trace_mm_swap_op_rd_done(swp_type(entry));
 
 	/*
 	 * Make sure try_to_free_swap or reuse_swap_page or swapoff did not
@@ -2553,7 +2585,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 
 	if (flags & FAULT_FLAG_WRITE) {
-		ret |= do_wp_page(mm, vma, address, page_table, pmd, ptl, pte);
+		ret |= do_wp_page(mm, vma, address, page_table, pmd, ptl, pte, flags);
 		if (ret & VM_FAULT_ERROR)
 			ret &= VM_FAULT_ERROR;
 		goto out;
@@ -2628,6 +2660,10 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte_t entry;
 
 	pte_unmap(page_table);
+
+	/* File mapping without ->vm_ops ? */
+	if (vma->vm_flags & VM_SHARED)
+		return VM_FAULT_SIGBUS;
 
 	/* Check if we need to add a guard page to the stack */
 	if (check_stack_guard_page(vma, address) < 0)
@@ -2921,11 +2957,15 @@ static int do_cow_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	spinlock_t *ptl;
 	pte_t *pte;
 	int ret;
+	gfp_t gfp = GFP_HIGHUSER_MOVABLE;
 
 	if (unlikely(anon_vma_prepare(vma)))
 		return VM_FAULT_OOM;
 
-	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+	if (IS_ENABLED(CONFIG_CMA) && (flags & FAULT_FLAG_NO_CMA))
+		gfp &= ~__GFP_MOVABLE;
+
+	new_page = alloc_page_vma(gfp, vma, address);
 	if (!new_page)
 		return VM_FAULT_OOM;
 
@@ -3033,6 +3073,9 @@ static int do_linear_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			- vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
 
 	pte_unmap(page_table);
+	/* The VMA was not fully populated on mmap() or missing VM_DONTEXPAND */
+	if (!vma->vm_ops->fault)
+		return VM_FAULT_SIGBUS;
 	if (!(flags & FAULT_FLAG_WRITE))
 		return do_read_fault(mm, vma, address, pmd, pgoff, flags,
 				orig_pte);
@@ -3198,11 +3241,10 @@ static int handle_pte_fault(struct mm_struct *mm,
 	entry = ACCESS_ONCE(*pte);
 	if (!pte_present(entry)) {
 		if (pte_none(entry)) {
-			if (vma->vm_ops) {
-				if (likely(vma->vm_ops->fault))
-					return do_linear_fault(mm, vma, address,
+			if (vma->vm_ops)
+				return do_linear_fault(mm, vma, address,
 						pte, pmd, flags, entry);
-			}
+
 			return do_anonymous_page(mm, vma, address,
 						 pte, pmd, flags);
 		}
@@ -3223,7 +3265,7 @@ static int handle_pte_fault(struct mm_struct *mm,
 	if (flags & FAULT_FLAG_WRITE) {
 		if (!pte_write(entry))
 			return do_wp_page(mm, vma, address,
-					pte, pmd, ptl, entry);
+					pte, pmd, ptl, entry, flags);
 		entry = pte_mkdirty(entry);
 	}
 	entry = pte_mkyoung(entry);
@@ -3586,6 +3628,24 @@ static int __access_remote_vm(struct task_struct *tsk, struct mm_struct *mm,
 		ret = get_user_pages(tsk, mm, addr, 1,
 				write, 1, &page, &vma);
 		if (ret <= 0) {
+#ifdef CONFIG_MTK_EXTMEM
+			if (!write) {
+				vma = find_vma(mm, addr);
+				if (!vma || vma->vm_start > addr)
+					break;
+				if (vma->vm_end < addr + len)
+					len = vma->vm_end - addr;
+				if (extmem_in_mspace(vma)) {
+					unsigned long pa = vma->vm_pgoff << PAGE_SHIFT;
+					void *extmem_va =
+						(void *)(get_virt_from_mspace(pa) + (addr - vma->vm_start));
+
+					memcpy(buf, extmem_va, len);
+					buf += len;
+					break;
+				}
+			}
+#endif
 #ifndef CONFIG_HAVE_IOREMAP_PROT
 			break;
 #else
