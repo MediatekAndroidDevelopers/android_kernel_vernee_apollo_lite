@@ -1919,7 +1919,7 @@ static int binder_dec_node(struct binder_node *node, int strong, int internal)
 }
 
 static struct binder_ref *binder_get_ref(struct binder_proc *proc,
-					uint32_t desc, bool need_strong_ref)
+					 u32 desc, bool need_strong_ref)
 {
 	struct rb_node *n = proc->refs_by_desc.rb_node;
 	struct binder_ref *ref;
@@ -3025,8 +3025,8 @@ static int binder_thread_write(struct binder_proc *proc,
 				}
 			} else
 				ref = binder_get_ref(proc, target,
-						cmd == BC_ACQUIRE ||
-						cmd == BC_RELEASE);
+						     cmd == BC_ACQUIRE ||
+						     cmd == BC_RELEASE);
 			if (ref == NULL) {
 				binder_user_error("%d:%d refcount change on invalid ref %d\n",
 					proc->pid, thread->pid, target);

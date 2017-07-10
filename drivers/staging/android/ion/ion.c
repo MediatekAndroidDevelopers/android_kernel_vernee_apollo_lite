@@ -645,8 +645,6 @@ void ion_free(struct ion_client *client, struct ion_handle *handle)
 	mutex_lock(&client->lock);
 	ion_free_nolock(client, handle);
 	mutex_unlock(&client->lock);
-	MMProfileLogEx(ION_MMP_Events[PROFILE_FREE], MMProfileFlagPulse,
-			 (unsigned long)client, (unsigned long)handle);
 }
 EXPORT_SYMBOL(ion_free);
 
