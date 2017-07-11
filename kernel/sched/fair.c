@@ -10770,14 +10770,6 @@ static void run_rebalance_domains(struct softirq_action *h)
 	rebalance_domains(this_rq, idle);
 }
 
-	/*
-	 * If this cpu has a pending nohz_balance_kick, then do the
-	 * balancing on behalf of the other idle cpus whose ticks are
-	 * stopped.
-	 */
-	nohz_idle_balance(this_rq, idle);
-}
-
 /*
  * Trigger the SCHED_SOFTIRQ if it is time to do periodic load balancing.
  */
