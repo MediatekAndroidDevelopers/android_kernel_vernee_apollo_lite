@@ -4222,17 +4222,6 @@ unsigned int cmp_down_threshold = 256;
 #define HMP_LB (0x4000)
 #define HMP_MAX_LOAD (NICE_0_LOAD - 1)
 
-/*
- * Returns the current capacity of cpu after applying both
- * cpu and freq scaling.
- */
-unsigned long capacity_curr_of(int cpu)
-{
-	return cpu_rq(cpu)->cpu_capacity_orig *
-	       arch_scale_freq_capacity(NULL, cpu)
-	       >> SCHED_CAPACITY_SHIFT;
-}
-
 static void collect_cluster_stats(struct clb_stats *clbs, struct cpumask *cluster_cpus, int target)
 {
 #define HMP_RESOLUTION_SCALING (4)
@@ -5761,7 +5750,7 @@ find_idlest_group(struct sched_domain *sd, struct task_struct *p,
 
 	if (!idlest || 100*this_load < imbalance*min_load)
 		return NULL;
-	}
+
 	return idlest;
 }
 
@@ -7758,7 +7747,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 
 	if (sgs->avg_load <= busiest->avg_load)
 		return false;
-	}
+
 
 	/*
 	 * Candiate sg has no more than one task per cpu and has higher

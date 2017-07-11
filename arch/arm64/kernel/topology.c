@@ -44,11 +44,6 @@ static DEFINE_PER_CPU(unsigned long, cpu_scale) = SCHED_CAPACITY_SCALE;
 
 unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
 {
-	return per_cpu(cpu_scale, cpu);
-}
-
-unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu)
-{
 #ifdef CONFIG_CPU_FREQ
 	unsigned long max_freq_scale = cpufreq_scale_max_freq_capacity(cpu);
 
@@ -263,27 +258,6 @@ out_map:
 out:
 	of_node_put(cn);
 	return ret;
-}
-
-/*
- * Look for a customed capacity of a CPU in the cpu_capacity table during the
- * boot. The update of all CPUs is in O(n^2) for heteregeneous system but the
- * function returns directly for SMP systems or if there is no complete set
- * of cpu efficiency, clock frequency data for each cpu.
- */
-static void update_cpu_capacity(unsigned int cpu)
-{
-	unsigned long capacity = cpu_capacity(cpu);
-
-	if (!capacity || !max_cpu_perf) {
-		cpu_capacity(cpu) = 0;
-		return;
-	}
-
-	capacity *= SCHED_CAPACITY_SCALE;
-	capacity /= max_cpu_perf;
-
-	set_capacity_scale(cpu, capacity);
 }
 
 static void __init parse_dt_cpu_capacity(void)

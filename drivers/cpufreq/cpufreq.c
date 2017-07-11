@@ -326,10 +326,12 @@ scale_freq_capacity(struct cpufreq_policy *policy, struct cpufreq_freqs *freqs)
 		per_cpu(max_freq_scale, cpu) = scale;
 }
 
+#ifndef CONFIG_CPU_FREQ
 unsigned long cpufreq_scale_freq_capacity(struct sched_domain *sd, int cpu)
 {
 	return per_cpu(freq_scale, cpu);
 }
+#endif
 
 unsigned long cpufreq_scale_max_freq_capacity(int cpu)
 {
