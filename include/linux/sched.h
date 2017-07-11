@@ -884,9 +884,6 @@ enum cpu_idle_type {
 #define SD_PREFER_SIBLING	0x1000	/* Prefer to place tasks in a sibling domain */
 #define SD_OVERLAP		0x2000	/* sched_domains of this level overlap */
 #define SD_NUMA			0x4000	/* cross-node balancing */
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-#define SD_BALANCE_TG		0x8000  /* Balance for thread group */
-#endif
 
 #ifdef CONFIG_SCHED_SMT
 static inline int cpu_smt_flags(void)
@@ -1143,6 +1140,7 @@ struct sched_avg {
 	u64 last_update_time, load_sum;
 	u32 util_sum, period_contrib;
 	unsigned long load_avg, util_avg;
+	unsigned long loadwop_avg, loadwop_sum;
 #ifdef CONFIG_SCHED_HMP
 	unsigned long pending_load;
 	u32 nr_pending;
@@ -1320,18 +1318,6 @@ enum perf_event_task_context {
 	perf_nr_task_contexts,
 };
 
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-struct thread_group_info_t {
-	/* # of cfs threas in the thread group per cluster*/
-	unsigned long cfs_nr_running;
-	/* # of threads in the thread group per cluster */
-	unsigned long nr_running;
-	/* runnable contrib of the thread group per cluster */
-	unsigned long loadwop_avg_contrib;
-};
-
-#endif
-
 #ifdef CONFIG_MT_SCHED_TRACE
 #ifdef CONFIG_MT_SCHED_DEBUG
 #define mt_sched_printf(event, x...) \
@@ -1469,11 +1455,6 @@ struct task_struct {
 	struct list_head children;	/* list of my children */
 	struct list_head sibling;	/* linkage in my parent's children list */
 	struct task_struct *group_leader;	/* threadgroup leader */
-
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-	raw_spinlock_t thread_group_info_lock;
-	struct thread_group_info_t *thread_group_info;
-#endif
 
 	/*
 	 * ptraced is the list of tasks this task is using ptrace on.

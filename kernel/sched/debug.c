@@ -953,10 +953,6 @@ static void print_cfs_group_stats_at_AEE(struct seq_file *m, int cpu, struct tas
 		SEQ_printf_at_AEE(m, "  .%-30s: %lld.%06ld\n", #F, SPLIT_NS((long long)F))
 
 	if (!se) {
-		struct sched_avg *avg = &cpu_rq(cpu)->avg;
-
-		P(avg->runnable_avg_sum);
-		P(avg->avg_period);
 		return;
 	}
 
@@ -1035,17 +1031,21 @@ void print_cfs_rq_at_AEE(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 	SEQ_printf_at_AEE(m, "  .%-22s: %d\n", "nr_running", cfs_rq->nr_running);
 	SEQ_printf_at_AEE(m, "  .%-22s: %ld\n", "load", cfs_rq->load.weight);
 #ifdef CONFIG_SMP
-	SEQ_printf_at_AEE(m, "  .%-22s: %ld\n", "load_avg",
-			cfs_rq->avg.load_avg);
+  SEQ_printf_at_AEE(m, "  .%-30s: %lu\n", "load_avg",
+      cfs_rq->avg.load_avg);
+  SEQ_printf_at_AEE(m, "  .%-30s: %lu\n", "runnable_load_avg",
+      cfs_rq->runnable_load_avg);
+  SEQ_printf_at_AEE(m, "  .%-30s: %lu\n", "util_avg",
+      cfs_rq->avg.util_avg);
+  SEQ_printf_at_AEE(m, "  .%-30s: %ld\n", "removed_load_avg",
+      atomic_long_read(&cfs_rq->removed_load_avg));
+  SEQ_printf_at_AEE(m, "  .%-30s: %ld\n", "removed_util_avg",
+      atomic_long_read(&cfs_rq->removed_util_avg));
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	SEQ_printf_at_AEE(m, "  .%-22s: %ld\n", "tg_load_contrib",
-			cfs_rq->tg_load_contrib);
-	SEQ_printf_at_AEE(m, "  .%-22s: %d\n", "tg_runnable_contrib",
-			cfs_rq->tg_runnable_contrib);
-	SEQ_printf_at_AEE(m, "  .%-22s: %ld\n", "tg_load_avg",
+	SEQ_printf_at_AEE(m, "  .%-30s: %lu\n", "tg_load_avg_contrib",
+			cfs_rq->tg_load_avg_contrib);
+	SEQ_printf_at_AEE(m, "  .%-30s: %ld\n", "tg_load_avg",
 			atomic_long_read(&cfs_rq->tg->load_avg));
-	SEQ_printf_at_AEE(m, "  .%-22s: %d\n", "tg->runnable_avg",
-			atomic_read(&cfs_rq->tg->runnable_avg));
 #endif
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH

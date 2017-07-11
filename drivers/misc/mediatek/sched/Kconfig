@@ -134,27 +134,6 @@ config MTK_SCHED_CMP
 	   energy and performance.
 	   say no if not sure.
 
-config MTK_SCHED_CMP_TGS
-	bool "Enable thread group scheduling"
-	depends on MTK_SCHED_CMP
-	default n
-	help
-	   CMP Scheduler Enhancement for MTK SoC.
-	   To utilize the nature of tasks in the same thread group, which  eager
-	   to share data (pages) essentially. Balance the same parent’s tasks to
-	   the same CPU cluster Would get improvement with L2-cache Read-Hit/Miss
-	   and Write.
-
-config MTK_SCHED_CMP_TGS_WAKEUP
-	bool "Enable thread group scheduling"
-	depends on MTK_SCHED_CMP_TGS
-	default n
-	help
-	   CMP Scheduler Enhancement for MTK SoC.
-	   If the wakeup task is single thread, it will try to find idlest group
-	   and find idlest CPU. Else if the wakeup task has thread group, prefer
-	   the cluster which has idle CPU with most tasks in the same thread group.
-
 endmenu
 
 menu "MTK Heterogenous MultiProcessor Scheduler"

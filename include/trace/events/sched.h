@@ -1048,8 +1048,8 @@ TRACE_EVENT(sched_dynamic_threshold,
 		__entry->status           = status;
 		__entry->curr_cpu         = curr_cpu;
 		__entry->target_cpu       = target_cpu;
-		__entry->curr_load        = cpu_rq(curr_cpu)->cfs.avg.load_avg;
-		__entry->target_load      = cpu_rq(target_cpu)->cfs.avg.load_avg;
+		__entry->curr_load        = cpu_rq(curr_cpu)->cfs.avg.loadwop_avg;
+		__entry->target_load      = cpu_rq(target_cpu)->cfs.avg.loadwop_avg;
 		__entry->task_load        = task_load;
 		__entry->B_load_avg       = B->load_avg;
 		__entry->L_load_avg       = L->load_avg;
@@ -1105,8 +1105,8 @@ TRACE_EVENT(sched_hmp_select_task_rq,
 		__entry->sd_flag          = sd_flag;
 		__entry->prev_cpu         = prev_cpu;
 		__entry->target_cpu       = target_cpu;
-		__entry->prev_load        = cpu_rq(prev_cpu)->cfs.avg.load_avg;
-		__entry->target_load      = cpu_rq(target_cpu)->cfs.avg.load_avg;
+		__entry->prev_load        = cpu_rq(prev_cpu)->cfs.avg.loadwop_avg;
+		__entry->target_load      = cpu_rq(target_cpu)->cfs.avg.loadwop_avg;
 		__entry->task_load        = task_load;
 		__entry->B_load_avg       = B->load_avg;
 		__entry->L_load_avg       = L->load_avg;

@@ -366,6 +366,7 @@ struct cfs_rq {
 	unsigned long tg_load_avg_contrib;
 #endif
 	atomic_long_t removed_load_avg, removed_util_avg;
+	atomic_long_t removed_loadwop_avg;
 #ifndef CONFIG_64BIT
 	u64 load_last_update_time_copy;
 #endif
@@ -1219,10 +1220,6 @@ static inline void idle_exit_fair(struct rq *rq) { }
 
 #endif
 
-# ifdef CONFIG_MTK_SCHED_CMP_TGS
-extern int group_leader_is_empty(struct task_struct *p);
-# endif /* CONFIG_MTK_SCHED_CMP_TGS */
-
 # ifdef CONFIG_MTK_SCHED_CMP
 extern void get_cluster_cpus(struct cpumask *cpus, int cluster_id, bool exclusive_offline);
 extern int get_cluster_id(unsigned int cpu);
@@ -1374,7 +1371,6 @@ extern void sched_avg_update(struct rq *rq);
 
 extern void arch_scale_set_curr_freq(int cpu, unsigned long freq);
 extern void arch_scale_set_max_freq(int cpu, unsigned long freq);
-extern unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu);
 
 #ifndef arch_scale_freq_capacity
 static __always_inline

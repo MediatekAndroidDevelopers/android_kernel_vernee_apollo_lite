@@ -844,82 +844,11 @@ static void set_load_weight(struct task_struct *p)
 	load->inv_weight = prio_to_wmult[prio];
 }
 
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-#ifdef CONFIG_MT_SCHED_TRACE_DETAIL
-static void tgs_log(struct rq *rq, struct task_struct *p)
-{
-	struct task_struct *tg = p->group_leader;
-	int i, num_cluster;
-
-	if (group_leader_is_empty(p))
-		return;
-
-	num_cluster = arch_get_nr_clusters();
-
-	mt_sched_printf(sched_cmp, "%d:%s %d:%s ", tg->pid, tg->comm, p->pid, p->comm);
-
-	for (i = 0; i < num_cluster; i++) {
-		mt_sched_printf(sched_cmp, "cluster %d: %lu %lu %lu ",
-			i,
-			tg->thread_group_info[i].nr_running,
-			tg->thread_group_info[i].cfs_nr_running,
-			tg->thread_group_info[i].loadwop_avg_contrib);
-	}
-}
-#endif /* CONFIG_MT_SCHED_TRACE_DETAIL */
-
-static void sched_tg_enqueue(struct rq *rq, struct task_struct *p)
-{
-	int id;
-	unsigned long flags;
-	struct task_struct *tg = p->group_leader;
-
-	if (group_leader_is_empty(p))
-		return;
-	id = arch_get_cluster_id(rq->cpu);
-	if (unlikely(WARN_ON(id < 0)))
-		return;
-
-	raw_spin_lock_irqsave(&tg->thread_group_info_lock, flags);
-	tg->thread_group_info[id].nr_running++;
-	raw_spin_unlock_irqrestore(&tg->thread_group_info_lock, flags);
-
-#ifdef CONFIG_MT_SCHED_TRACE_DETAIL
-	tgs_log(rq, p);
-#endif
-}
-
-static void sched_tg_dequeue(struct rq *rq, struct task_struct *p)
-{
-	int id;
-	unsigned long flags;
-	struct task_struct *tg = p->group_leader;
-
-	if (group_leader_is_empty(p))
-		return;
-	id = arch_get_cluster_id(rq->cpu);
-	if (unlikely(WARN_ON(id < 0)))
-		return;
-
-	raw_spin_lock_irqsave(&tg->thread_group_info_lock, flags);
-	/* WARN_ON(!tg->thread_group_info[id].nr_running); */
-	tg->thread_group_info[id].nr_running--;
-	raw_spin_unlock_irqrestore(&tg->thread_group_info_lock, flags);
-
-#ifdef CONFIG_MT_SCHED_TRACE_DETAIL
-	tgs_log(rq, p);
-#endif
-}
-#endif /* CONFIG_MTK_SCHED_CMP_TGS */
-
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
 {
 	update_rq_clock(rq);
 	sched_info_queued(rq, p);
 	p->sched_class->enqueue_task(rq, p, flags);
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-	sched_tg_enqueue(rq, p);
-#endif
 }
 
 static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
@@ -927,9 +856,6 @@ static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 	update_rq_clock(rq);
 	sched_info_dequeued(rq, p);
 	p->sched_class->dequeue_task(rq, p, flags);
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-	sched_tg_dequeue(rq, p);
-#endif
 }
 
 void activate_task(struct rq *rq, struct task_struct *p, int flags)
@@ -6548,21 +6474,13 @@ sd_init(struct sched_domain_topology_level *tl, int cpu)
 					| 1*SD_BALANCE_NEWIDLE
 					| 1*SD_BALANCE_EXEC
 					| 1*SD_BALANCE_FORK
-#ifdef CONFIG_MT_LOAD_BALANCE_ENHANCEMENT
-					| 1*SD_BALANCE_WAKE
-					| 0*SD_WAKE_AFFINE
-#else
 					| 0*SD_BALANCE_WAKE
 					| 1*SD_WAKE_AFFINE
-#endif
 					| 0*SD_SHARE_CPUCAPACITY
 					| 0*SD_SHARE_PKG_RESOURCES
 					| 0*SD_SERIALIZE
 					| 0*SD_PREFER_SIBLING
 					| 0*SD_NUMA
-#ifdef CONFIG_MTK_SCHED_CMP_TGS
-					| 1*SD_BALANCE_TG
-#endif
 					| sd_flags
 					,
 
