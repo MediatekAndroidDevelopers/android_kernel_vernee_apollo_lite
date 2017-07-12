@@ -3216,59 +3216,7 @@ static void binder_transaction(struct binder_proc *proc,
 				return_error = BR_FAILED_REPLY;
 				goto err_translate_failed;
 			}
-			break;
-		case BINDER_TYPE_HANDLE:
-		case BINDER_TYPE_WEAK_HANDLE:{
-				struct binder_ref *ref = binder_get_ref(proc, fp->handle,
-							fp->type == BINDER_TYPE_HANDLE);
-
-				if (ref == NULL) {
-					binder_user_error
-					    ("%d:%d got transaction with invalid handle, %d\n",
-					     proc->pid, thread->pid, fp->handle);
-					return_error = BR_FAILED_REPLY;
-					goto err_binder_get_ref_failed;
-				}
-				if (security_binder_transfer_binder(proc->tsk, target_proc->tsk)) {
-					return_error = BR_FAILED_REPLY;
-					goto err_binder_get_ref_failed;
-				}
-				if (ref->node->proc == target_proc) {
-					if (fp->type == BINDER_TYPE_HANDLE)
-						fp->type = BINDER_TYPE_BINDER;
-					else
-						fp->type = BINDER_TYPE_WEAK_BINDER;
-					fp->binder = ref->node->ptr;
-					fp->cookie = ref->node->cookie;
-					binder_inc_node(ref->node,
-							fp->type == BINDER_TYPE_BINDER, 0, NULL);
-					trace_binder_transaction_ref_to_node(t, ref);
-					binder_debug(BINDER_DEBUG_TRANSACTION,
-						     "        ref %d desc %d -> node %d u%016llx\n",
-						     ref->debug_id, ref->desc,
-						     ref->node->debug_id, (u64) ref->node->ptr);
-				} else {
-					struct binder_ref *new_ref;
-
-					new_ref = binder_get_ref_for_node(target_proc, ref->node);
-					if (new_ref == NULL) {
-						return_error = BR_FAILED_REPLY;
-						goto err_binder_get_ref_for_node_failed;
-					}
-					fp->binder = 0;
-					fp->handle = new_ref->desc;
-					fp->cookie = 0;
-					binder_inc_ref(new_ref,
-						       fp->type == BINDER_TYPE_HANDLE, NULL);
-					trace_binder_transaction_ref_to_ref(t, ref, new_ref);
-					binder_debug(BINDER_DEBUG_TRANSACTION,
-						     "        ref %d desc %d -> ref %d desc %d (node %d)\n",
-						     ref->debug_id, ref->desc,
-						     new_ref->debug_id,
-						     new_ref->desc, ref->node->debug_id);
-				}
-			}
-			break;
+		} break;
 
 		case BINDER_TYPE_FD: {
 			struct binder_fd_object *fp = to_binder_fd_object(hdr);
