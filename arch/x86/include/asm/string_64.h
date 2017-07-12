@@ -27,6 +27,8 @@ static __always_inline void *__inline_memcpy(void *to, const void *from, size_t 
    function. */
 
 #define __HAVE_ARCH_MEMCPY 1
+
+#ifndef CONFIG_FORTIFY_SOURCE
 #ifndef CONFIG_KMEMCHECK
 #if (__GNUC__ == 4 && __GNUC_MINOR__ >= 3) || __GNUC__ > 4
 extern void *memcpy(void *to, const void *from, size_t len);
@@ -50,6 +52,7 @@ extern void *__memcpy(void *to, const void *from, size_t len);
  */
 #define memcpy(dst, src, len) __inline_memcpy((dst), (src), (len))
 #endif
+#endif /* !CONFIG_FORTIFY_SOURCE */
 
 #define __HAVE_ARCH_MEMSET
 void *memset(void *s, int c, size_t n);
