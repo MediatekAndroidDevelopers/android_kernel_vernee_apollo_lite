@@ -583,6 +583,8 @@ ssize_t amddulthro_pid_write(struct file *file, const char __user *buf, size_t c
 	char tmp[MAX_LEN] = { 0 };
 	int len = 0;
 
+	len = (len < (MAX_LEN-1)) ? len : MAX_LEN-1;
+
 	/* write data to the buffer */
 	len = (count < (sizeof(tmp) - 1)) ? count : (sizeof(tmp) - 1);
 	if (copy_from_user(tmp, buf, len))
