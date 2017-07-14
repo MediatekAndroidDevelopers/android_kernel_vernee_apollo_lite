@@ -72,7 +72,7 @@ ccflags-y += -DGED_DVFS_ENABLE \
 	     -DENABLE_TIMER_BACKUP 
 endif
 
-ccflags-y += -DGED_SYSTRACE_UTIL
+#ccflags-y += -DGED_SYSTRACE_UTIL
 
 ccflags-y += -DGED_DVFS_DEBUG_BUF
 
