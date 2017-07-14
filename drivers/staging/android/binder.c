@@ -2743,10 +2743,6 @@ retry:
 			if (put_user(thread->return_error2, (uint32_t __user *) ptr))
 				return -EFAULT;
 			ptr += sizeof(uint32_t);
-			pr_err
-			    ("read put err2 %u to user %p, thread error %u:%u\n",
-			     thread->return_error2, ptr, thread->return_error,
-			     thread->return_error2);
 			binder_stat_br(proc, thread, thread->return_error2);
 			if (ptr == end)
 				goto done;
@@ -2755,8 +2751,6 @@ retry:
 		if (put_user(thread->return_error, (uint32_t __user *) ptr))
 			return -EFAULT;
 		ptr += sizeof(uint32_t);
-		pr_err("read put err %u to user %p, thread error %u:%u\n",
-		       thread->return_error, ptr, thread->return_error, thread->return_error2);
 		binder_stat_br(proc, thread, thread->return_error);
 		thread->return_error = BR_OK;
 		goto done;
@@ -3269,34 +3263,6 @@ static int binder_ioctl_write_read(struct file *filp,
 					 &bwr.read_consumed, filp->f_flags & O_NONBLOCK);
 		trace_binder_read_done(ret);
 		if (!list_empty(&proc->todo)) {
-			if (thread->proc != proc) {
-				int i;
-				unsigned int *p;
-
-				pr_debug("binder: " "thread->proc != proc\n");
-				pr_debug("binder: thread %p\n", thread);
-				p = (unsigned int *)thread - 32;
-				for (i = -4; i <= 3; i++, p += 8) {
-					pr_debug("%p %08x %08x %08x %08x  %08x %08x %08x %08x\n",
-						 p, *(p), *(p + 1), *(p + 2),
-						 *(p + 3), *(p + 4), *(p + 5), *(p + 6), *(p + 7));
-				}
-				pr_debug("binder: thread->proc " "%p\n", thread->proc);
-				p = (unsigned int *)thread->proc - 32;
-				for (i = -4; i <= 5; i++, p += 8) {
-					pr_debug("%p %08x %08x %08x %08x  %08x %08x %08x %08x\n",
-						 p, *(p), *(p + 1), *(p + 2),
-						 *(p + 3), *(p + 4), *(p + 5), *(p + 6), *(p + 7));
-				}
-				pr_debug("binder: proc %p\n", proc);
-				p = (unsigned int *)proc - 32;
-				for (i = -4; i <= 5; i++, p += 8) {
-					pr_debug("%p %08x %08x %08x %08x  %08x %08x %08x %08x\n",
-						 p, *(p), *(p + 1), *(p + 2),
-						 *(p + 3), *(p + 4), *(p + 5), *(p + 6), *(p + 7));
-				}
-				BUG();
-			}
 			wake_up_interruptible(&proc->wait);
 		}
 		if (ret < 0) {
