@@ -31,6 +31,7 @@
 #include <asm/ptrace.h>
 #include <asm/thread_info.h>
 #include <asm/uaccess.h>
+#include <asm/asm-uaccess.h>
 #include <asm/unistd.h>
 
 /*
@@ -336,11 +337,6 @@ alternative_endif
 	eret					// return to kernel
 	.endm
 #endif
-
-	.macro	get_thread_info, rd
-	mov	\rd, sp
-	and	\rd, \rd, #~(THREAD_SIZE - 1)	// top of stack
-	.endm
 
 /*
  * These are the registers used in the syscall handler, and allow us to

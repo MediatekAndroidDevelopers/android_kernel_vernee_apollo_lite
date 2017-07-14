@@ -429,9 +429,6 @@ struct binder_transaction {
 #endif
 };
 
-static inline void binder_lock(const char *tag);
-static inline void binder_unlock(const char *tag);
-
 static void
 binder_defer_work(struct binder_proc *proc, enum binder_deferred_state defer);
 
