@@ -99,11 +99,6 @@ static struct dentry *binder_debugfs_dir_entry_proc;
 static atomic_t binder_last_id;
 static struct workqueue_struct *binder_deferred_workqueue;
 
-#define RT_PRIO_INHERIT			"v1.7"
-#ifdef RT_PRIO_INHERIT
-#include <linux/sched/rt.h>
-#endif
-
 #define BINDER_DEBUG_ENTRY(name) \
 static int binder_##name##_open(struct inode *inode, struct file *file) \
 { \
@@ -557,10 +552,6 @@ struct binder_proc {
 	int tmp_ref;
 	long default_priority;
 	struct dentry *debugfs_entry;
-#ifdef RT_PRIO_INHERIT
-	unsigned long default_rt_prio:16;
-	unsigned long default_policy:16;
-#endif
 	struct binder_alloc alloc;
 	struct binder_context *context;
 	spinlock_t inner_lock;
@@ -651,12 +642,6 @@ struct binder_transaction {
 	 * during thread teardown
 	 */
 	spinlock_t lock;
-#ifdef RT_PRIO_INHERIT
-	unsigned long rt_prio:16;
-	unsigned long policy:16;
-	unsigned long saved_rt_prio:16;
-	unsigned long saved_policy:16;
-#endif
 };
 
 /**
@@ -2198,18 +2183,6 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 	}
 }
 
-#ifdef RT_PRIO_INHERIT
-static void mt_sched_setscheduler_nocheck(struct task_struct *p, int policy,
-					  struct sched_param *param)
-{
-	int ret;
-
-	ret = sched_setscheduler_nocheck(p, policy, param);
-	if (ret)
-		pr_err("set scheduler fail, error code: %d\n", ret);
-}
-#endif
-
 static int binder_translate_binder(struct flat_binder_object *fp,
 				   struct binder_transaction *t,
 				   struct binder_thread *thread)
@@ -2545,17 +2518,6 @@ static void binder_transaction(struct binder_proc *proc,
 			return_error_line = __LINE__;
 			goto err_empty_call_stack;
 		}
-#ifdef RT_PRIO_INHERIT
-		if (rt_task(current)
-		    && (MAX_RT_PRIO != in_reply_to->saved_rt_prio)
-		    && !(thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
-					   BINDER_LOOPER_STATE_ENTERED))) {
-			struct sched_param param = {
-				.sched_priority = in_reply_to->saved_rt_prio,
-			};
-			mt_sched_setscheduler_nocheck(current, in_reply_to->saved_policy, &param);
-		}
-#endif
 		if (in_reply_to->to_thread != thread) {
 			spin_lock(&in_reply_to->lock);
 			binder_user_error("%d:%d got reply transaction with bad transaction stack, transaction %d has target %d:%d\n",
@@ -2753,11 +2715,6 @@ static void binder_transaction(struct binder_proc *proc,
 	t->code = tr->code;
 	t->flags = tr->flags;
 	t->priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-	t->rt_prio = current->rt_priority;
-	t->policy = current->policy;
-	t->saved_rt_prio = MAX_RT_PRIO;
-#endif
 
 	trace_binder_transaction(reply, t, target_node);
 
@@ -3030,47 +2987,6 @@ static void binder_transaction(struct binder_proc *proc,
 		binder_inner_proc_unlock(target_proc);
 		binder_node_unlock(target_node);
 	}
-#ifdef RT_PRIO_INHERIT
-	if (target_thread) {
-		unsigned long flag;
-		wait_queue_t *curr, *next;
-		bool is_lock = false;
-
-		spin_lock_irqsave(&target_thread->lock, flag);
-		is_lock = true;
-		list_for_each_entry_safe(curr, next, &target_wait->task_list, task_list) {
-			unsigned flags = curr->flags;
-			struct task_struct *tsk = curr->private;
-
-			if (tsk == NULL) {
-				spin_unlock_irqrestore(&target_wait->lock, flag);
-				is_lock = false;
-				wake_up_interruptible_sync(&target_thread->wait);
-				break;
-			}
-			if (!reply && (t->policy == SCHED_RR || t->policy == SCHED_FIFO)
-			    && t->rt_prio > tsk->rt_priority && !(t->flags & TF_ONE_WAY)) {
-				struct sched_param param = {
-					.sched_priority = t->rt_prio,
-				};
-
-				t->saved_rt_prio = tsk->rt_priority;
-				t->saved_policy = tsk->policy;
-				mt_sched_setscheduler_nocheck(tsk, t->policy, &param);
-			}
-			if (curr->func(curr, TASK_INTERRUPTIBLE, 0, NULL) &&
-			    (flags & WQ_FLAG_EXCLUSIVE))
-				break;
-		}
-		if (is_lock)
-			spin_unlock_irqrestore(&target_wait->lock, flag);
-	} else if (wakeup_for_proc_work) {
-		binder_inner_proc_lock(target_proc);
-		binder_wakeup_proc_ilocked(target_proc,
-					   !(tr->flags & TF_ONE_WAY));
-		binder_inner_proc_unlock(target_proc);
-	}
-#else
 	if (target_thread) {
 		wake_up_interruptible_sync(&target_thread->wait);
 	} else if (wakeup_for_proc_work) {
@@ -3079,7 +2995,6 @@ static void binder_transaction(struct binder_proc *proc,
 					   !(tr->flags & TF_ONE_WAY));
 		binder_inner_proc_unlock(target_proc);
 	}
-#endif
 	if (target_thread)
 		binder_thread_dec_tmpref(target_thread);
 	binder_proc_dec_tmpref(target_proc);
@@ -3749,21 +3664,7 @@ retry:
 			wait_event_interruptible(binder_user_error_wait,
 						 binder_stop_on_user_error < 2);
 		}
-#ifdef RT_PRIO_INHERIT
-		/* disable preemption to prevent from schedule-out immediately */
-		preempt_disable();
-#endif
 		binder_set_nice(proc->default_priority);
-#ifdef RT_PRIO_INHERIT
-		if (rt_task(current) && !binder_has_work(thread, true)) {
-			/* make sure binder has no work before setting priority back */
-			struct sched_param param = {
-				.sched_priority = proc->default_rt_prio,
-			};
-			mt_sched_setscheduler_nocheck(current, proc->default_policy, &param);
-		}
-		preempt_enable_no_resched();
-#endif
 	}
 
 	if (non_block) {
@@ -3979,21 +3880,6 @@ retry:
 			tr.target.ptr = target_node->ptr;
 			tr.cookie = target_node->cookie;
 			t->saved_priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-			/* since we may fail the rt inherit due to target
-			 * wait queue task_list is empty, check again here.
-			 */
-			if ((SCHED_RR == t->policy || SCHED_FIFO == t->policy)
-			    && t->rt_prio > current->rt_priority && !(t->flags & TF_ONE_WAY)) {
-				struct sched_param param = {
-					.sched_priority = t->rt_prio,
-				};
-
-				t->saved_rt_prio = current->rt_priority;
-				t->saved_policy = current->policy;
-				mt_sched_setscheduler_nocheck(current, t->policy, &param);
-			}
-#endif
 			if (t->priority < target_node->min_priority && !(t->flags & TF_ONE_WAY))
 				binder_set_nice(t->priority);
 			else if (!(t->flags & TF_ONE_WAY) ||
@@ -4597,10 +4483,6 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	proc->tsk = current->group_leader;
 	INIT_LIST_HEAD(&proc->todo);
 	proc->default_priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-	proc->default_rt_prio = current->rt_priority;
-	proc->default_policy = current->policy;
-#endif
 	binder_dev = container_of(filp->private_data, struct binder_device,
 				  miscdev);
 	proc->context = &binder_dev->context;
