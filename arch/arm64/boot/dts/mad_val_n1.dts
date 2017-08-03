@@ -1582,6 +1582,7 @@
 		status = "okay";
 	};
 };
+
 /* USB TYPEC GPIO start */
 &pio {
 	usb_default: usb_default {
@@ -1591,7 +1592,7 @@
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO197__FUNC_GPIO197>;
 			slew-rate = <1>;
-			output-high;
+			output-low;
 		};
 	};
 
@@ -1651,7 +1652,7 @@
 		};
 	};
 
-	gpio_sii7033_rst_init: gpio251_sii7033_rst_init {
+	gpio_fusb340_noe_init: gpio251_fusb340_noe_init {
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO251__FUNC_GPIO251>;
 			slew-rate = <1>;
@@ -1659,7 +1660,7 @@
 		};
 	};
 
-	gpio_sii7033_rst_low: gpio251_sii7033_rst_low {
+	gpio_fusb340_noe_low: gpio251_fusb340_noe_low {
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO251__FUNC_GPIO251>;
 			slew-rate = <1>;
@@ -1667,9 +1668,33 @@
 		};
 	};
 
-	gpio_sii7033_rst_high: gpio251_sii7033_rst_high {
+	gpio_fusb340_noe_high: gpio251_fusb340_noe_high {
 		pins_cmd_dat {
 			pins = <PINMUX_GPIO251__FUNC_GPIO251>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	gpio_fusb340_sel_init: gpio252_fusb340_sel_init {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO252__FUNC_GPIO252>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	gpio_fusb340_sel_low: gpio252_fusb340_sel_low {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO252__FUNC_GPIO252>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	gpio_fusb340_sel_high: gpio252_fusb340_sel_high {
+		pins_cmd_dat {
+			pins = <PINMUX_GPIO252__FUNC_GPIO252>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -1686,9 +1711,12 @@
 		"redriver_c2_low",
 		"redriver_c2_hiz",
 		"redriver_c2_high",
-		"sii7033_rst_init",
-		"sii7033_rst_low",
-		"sii7033_rst_high";
+		"fusb340_noe_init",
+		"fusb340_noe_low",
+		"fusb340_noe_high",
+		"fusb340_sel_init",
+		"fusb340_sel_low",
+		"fusb340_sel_high";
 
 	pinctrl-0 = <&usb_default>;
 	pinctrl-1 = <&gpio_redriver_c1_init>;
@@ -1699,64 +1727,15 @@
 	pinctrl-6 = <&gpio_redriver_c2_low>;
 	pinctrl-7 = <&gpio_redriver_c2_hiz>;
 	pinctrl-8 = <&gpio_redriver_c2_high>;
-	pinctrl-9 = <&gpio_sii7033_rst_init>;
-	pinctrl-10 = <&gpio_sii7033_rst_low>;
-	pinctrl-11 = <&gpio_sii7033_rst_high>;
+	pinctrl-9 = <&gpio_fusb340_noe_init>;
+	pinctrl-10 = <&gpio_fusb340_noe_low>;
+	pinctrl-11 = <&gpio_fusb340_noe_high>;
+	pinctrl-12 = <&gpio_fusb340_sel_init>;
+	pinctrl-13 = <&gpio_fusb340_sel_low>;
+	pinctrl-14 = <&gpio_fusb340_sel_high>;
 	status = "okay";
 };
 /* USB TYPEC GPIO end */
-
-/* USB XHCI GPIO start */
-&pio {
-	iddig_default: iddig_default {
-	};
-
-	gpio181_mode1_iddig: iddig_init {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO181__FUNC_IDDIG>;
-			slew-rate = <0>;
-			bias-pull-up = <00>;
-		};
-	};
-};
-
-&pio {
-	drvvbus_default: drvvbus_default {
-	};
-
-	gpio94_mode1_drvvbus_low: drvvbus_low {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO94__FUNC_USB_DRVVBUS>;
-			slew-rate = <1>;
-			output-low;
-		};
-	};
-
-	gpio94_mode1_drvvbus_high: drvvbus_high {
-		pins_cmd_dat {
-			pins = <PINMUX_GPIO94__FUNC_USB_DRVVBUS>;
-			slew-rate = <1>;
-			output-high;
-		};
-	};
-};
-
-&usb0 {
-	pinctrl-names = "iddig_default", "iddig_init";
-	pinctrl-0 = <&iddig_default>;
-	pinctrl-1 = <&gpio181_mode1_iddig>;
-	status = "okay";
-};
-
-&xhci0 {
-	pinctrl-names = "drvvbus_default", "drvvbus_low", "drvvbus_high";
-	pinctrl-0 = <&drvvbus_default>;
-	pinctrl-1 = <&gpio94_mode1_drvvbus_low>;
-	pinctrl-2 = <&gpio94_mode1_drvvbus_high>;
-	status = "okay";
-};
-
-/* USB XHCI GPIO start */
 
 /* SCP GPIO standardization */
 
