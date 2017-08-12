@@ -629,7 +629,7 @@ static int set_memory_buffer(disp_session_input_config *input)
 	int i = 0;
 	int layer_id = 0;
 	unsigned int dst_size = 0;
-	unsigned int dst_mva = 0;
+	unsigned long dst_mva = 0;
 	unsigned int session_id = 0;
 	disp_session_sync_info *session_info;
 
@@ -660,7 +660,7 @@ static int set_memory_buffer(disp_session_input_config *input)
 			} else {
 				disp_sync_query_buf_info(session_id, layer_id,
 							 (unsigned int)(input->config[i].next_buff_idx),
-							 (unsigned long *)&dst_mva, &dst_size);
+							 &dst_mva, &dst_size);
 				input->config[i].src_phy_addr = (void *)(phys_addr_t)dst_mva;
 			}
 
@@ -669,7 +669,7 @@ static int set_memory_buffer(disp_session_input_config *input)
 
 
 			DISPPR_FENCE
-			    ("S+/ML%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%x/t%d/sec%d\n",
+			    ("S+/ML%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%lu/t%d/sec%d\n",
 			     input->config[i].layer_id, input->config[i].layer_enable,
 			     input->config[i].next_buff_idx, input->config[i].src_width,
 			     input->config[i].src_height, input->config[i].src_offset_x,
@@ -713,7 +713,7 @@ static int set_external_buffer(disp_session_input_config *input)
 	int ret = 0;
 	int layer_id = 0;
 	unsigned int dst_size = 0;
-	unsigned int dst_mva = 0;
+	unsigned long dst_mva = 0;
 	unsigned int session_id = 0;
 	unsigned int mva_offset = 0;
 	disp_session_sync_info *session_info;
@@ -744,7 +744,7 @@ static int set_external_buffer(disp_session_input_config *input)
 			} else {
 				disp_sync_query_buf_info(session_id, layer_id,
 							(unsigned int)input->config[i].next_buff_idx,
-							(unsigned long *)&dst_mva, &dst_size);
+							&dst_mva, &dst_size);
 				input->config[i].src_phy_addr = (void *)((phys_addr_t)dst_mva);
 			}
 
@@ -753,7 +753,7 @@ static int set_external_buffer(disp_session_input_config *input)
 
 
 			DISPPR_FENCE
-			    ("S+/EL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08x\n",
+			    ("S+/EL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lu\n",
 			     input->config[i].layer_id, input->config[i].layer_enable,
 			     input->config[i].next_buff_idx, input->config[i].src_width,
 			     input->config[i].src_height, input->config[i].src_offset_x,
@@ -807,7 +807,7 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 	int i = 0;
 	int layer_id = 0;
 	unsigned int dst_size = 0;
-	unsigned int dst_mva = 0;
+	unsigned long dst_mva = 0;
 	unsigned int session_id = 0;
 	unsigned int mva_offset = 0;
 	disp_session_sync_info *session_info;
@@ -849,11 +849,11 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 				cfg->input_cfg[i].security = DISP_NORMAL_BUFFER;
 			}
 			if (cfg->input_cfg[i].src_phy_addr) {
-				dst_mva = (unsigned long)(cfg->input_cfg[i].src_phy_addr);
+				dst_mva = (phys_addr_t)(cfg->input_cfg[i].src_phy_addr);
 			} else {
 				disp_sync_query_buf_info(session_id, layer_id,
 						(unsigned int)cfg->input_cfg[i].next_buff_idx,
-						(unsigned long *)&dst_mva, &dst_size);
+						&dst_mva, &dst_size);
 			}
 
 			cfg->input_cfg[i].src_phy_addr = (void *)(phys_addr_t)dst_mva;
@@ -861,7 +861,7 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 			if (dst_mva == 0) {
 				DISPPR_ERROR("disable layer %d because of no valid mva\n",
 					     cfg->input_cfg[i].layer_id);
-				DISPERR("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08x/sec%d/s%d\n",
+				DISPERR("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lu/sec%d/s%d\n",
 				     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
 				     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
 				     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
@@ -884,7 +884,7 @@ static int input_config_preprocess(struct disp_frame_cfg_t *cfg)
 					      cfg->input_cfg[i].next_buff_idx, mva_offset,
 					      cfg->input_cfg[i].frm_sequence);
 
-			DISPPR_FENCE("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08x/sec%d\n",
+			DISPPR_FENCE("S+/PL%d/e%d/id%d/%dx%d(%d,%d)(%d,%d)/%s/%d/0x%p/mva0x%08lu/sec%d\n",
 			     cfg->input_cfg[i].layer_id, cfg->input_cfg[i].layer_enable,
 			     cfg->input_cfg[i].next_buff_idx, cfg->input_cfg[i].src_width,
 			     cfg->input_cfg[i].src_height, cfg->input_cfg[i].src_offset_x,
