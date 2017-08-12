@@ -40,6 +40,12 @@ ifeq ($(CONFIG_MTK_IN_HOUSE_TEE_SUPPORT),yes)
 endif
 #ccflags-y += -DMTK_SEC_VIDEO_PATH_SUPPORT	#need to modify jiaguang.zhang
 #ccflags-y += -DCONFIG_MTK_IN_HOUSE_TEE_SUPPORT
+
+
+ifneq ($(TARGET_BUILD_VARIANT),user)
+ccflags-y += -D_CMDQ_TEST_PROC_
+endif
+
 # Enable MET
 ccflags-y += -DMET_USER_EVENT_SUPPORT
 ccflags-y += -DDEBUG_INFO
