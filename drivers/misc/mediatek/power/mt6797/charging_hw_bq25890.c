@@ -706,9 +706,9 @@ static unsigned int charging_hw_init(void *data)
 	bq25890_config_interface(bq25890_CON2, 0x0, 0x1, 5);	/* boost freq 1.5MHz when OTG_CONFIG=1 */
 	bq25890_config_interface(bq25890_CONA, 0x7, 0xF, 4);	/* boost voltagte 4.998V default */
 	bq25890_config_interface(bq25890_CONA, 0x3, 0x7, 0);	/* boost current limit 1.3A */
-#ifdef CONFIG_MTK_BIF_SUPPORT
+#if 1//def CONFIG_MTK_BIF_SUPPORT
 	bq25890_config_interface(bq25890_CON8, 0x4, 0x7, 5);	/* enable ir_comp_resistance */
-	bq25890_config_interface(bq25890_CON8, 0x7, 0x7, 2);	/* enable ir_comp_vdamp */
+	bq25890_config_interface(bq25890_CON8, 0x5, 0x7, 2);	/* enable ir_comp_vdamp */
 #else
 	bq25890_config_interface(bq25890_CON8, 0x0, 0x7, 5);	/* disable ir_comp_resistance */
 	bq25890_config_interface(bq25890_CON8, 0x0, 0x7, 2);	/* disable ir_comp_vdamp */
@@ -726,12 +726,12 @@ static unsigned int charging_hw_init(void *data)
 	/*CV mode */
 	bq25890_config_interface(bq25890_CON6, 0x0, 0x1, 0);	/* recharge voltage@VRECHG=CV-100MV */
 	bq25890_config_interface(bq25890_CON7, 0x1, 0x1, 7);	/* disable ICHG termination detect */
-	bq25890_config_interface(bq25890_CON5, 0x1, 0x7, 0);	/* termianation current default 128mA */
+	bq25890_config_interface(bq25890_CON5, 0x2, 0x7, 0);	/* termianation current default 128mA */
 	#ifdef CONFIG_BATTERY_HIGH_VOLTAGE
 	if(CONFIG_BATTERY_HIGH_VOLTAGE == 4350)
-		bq25890_config_interface(bq25890_CON6, 0x1f, 0x3F, 2);//offset = 3.84V
+		bq25890_config_interface(bq25890_CON6, 0x23, 0x3F, 2);//offset = 3.84V
 	else if(CONFIG_BATTERY_HIGH_VOLTAGE == 4400)
-		bq25890_config_interface(bq25890_CON6, 0x1f, 0x3F, 2);//offset = 3.84V
+		bq25890_config_interface(bq25890_CON6, 0x23, 0x3F, 2);//offset = 3.84V
 	#endif
 
 
@@ -824,11 +824,18 @@ static unsigned int charging_get_current(void *data)
 	unsigned int array_size;
 	/*unsigned char reg_value; */
 	unsigned int val;
+	unsigned int i = 0, sum_current = 0;
+	unsigned int currentArray[7] = {50, 100, 200, 400, 800, 1600, 3200};
 
 	/*Get current level */
 	array_size = GETARRAYNUM(CS_VTH);
 	val = bq25890_get_ichg();
-	*(unsigned int *) data = val;
+	val &= 0x7F;
+	for(i = 0; i < 7; i++)
+	{
+		sum_current += ((val >> i) & 0x01) * currentArray[i];
+	}
+	*(unsigned int *) data = sum_current;
 	/* *(unsigned int *)data = charging_value_to_parameter(CS_VTH,array_size,val); */
 
 	return status;

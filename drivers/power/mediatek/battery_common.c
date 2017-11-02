@@ -2346,14 +2346,11 @@ void mt_battery_GetBatteryData(void)
 {
 	unsigned int bat_vol, charger_vol, Vsense, ZCV;
 	signed int ICharging, temperature, temperatureR, temperatureV, SOC;
-	static signed int bat_sum, icharging_sum;//, temperature_sum;
+	static signed int bat_sum, icharging_sum, temperature_sum;
 	static signed int batteryVoltageBuffer[BATTERY_AVERAGE_SIZE];
 	static signed int batteryCurrentBuffer[BATTERY_AVERAGE_SIZE];
-	#if defined(USER_BUILD_KERNEL)
 	static signed int batteryTempBuffer[BATTERY_AVERAGE_SIZE];
-	static signed int temperature_sum;
-	#endif
-	static unsigned char batteryIndex = 0xff;
+	static unsigned char batteryIndex = 0;
 	static signed int previous_SOC = -1;
 	kal_bool current_sign;
 
@@ -2402,7 +2399,6 @@ void mt_battery_GetBatteryData(void)
 		    mt_battery_average_method(BATTERY_AVG_VOLT, &batteryVoltageBuffer[0], bat_vol,
 					      &bat_sum, batteryIndex);
 	}
-	#if defined(USER_BUILD_KERNEL)
 
 	if (battery_cmd_thermal_test_mode == 1) {
 		battery_log(BAT_LOG_CRTI, "test mode , battery temperature is fixed.\n");
@@ -2411,9 +2407,6 @@ void mt_battery_GetBatteryData(void)
 		    mt_battery_average_method(BATTERY_AVG_TEMP, &batteryTempBuffer[0], temperature,
 					      &temperature_sum, batteryIndex);
 	}
- #else
- 			BMT_status.temperature = 30;
- #endif
 
 	BMT_status.Vsense = Vsense;
 	BMT_status.charger_vol = charger_vol;

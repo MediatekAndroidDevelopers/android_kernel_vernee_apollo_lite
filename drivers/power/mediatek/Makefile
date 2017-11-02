@@ -90,6 +90,3 @@ else
 		endif
 	endif
 endif
-ifeq ($(TARGET_BUILD_VARIANT),user)
-ccflags-y += -DUSER_BUILD_KERNEL
-endif
