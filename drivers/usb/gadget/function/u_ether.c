@@ -75,6 +75,7 @@ struct eth_dev {
 	unsigned		header_len;
 	unsigned		ul_max_pkts_per_xfer;
 	unsigned		dl_max_pkts_per_xfer;
+	uint32_t		dl_max_xfer_size;
 	struct sk_buff		*(*wrap)(struct gether *, struct sk_buff *skb);
 	int			(*unwrap)(struct gether *,
 						struct sk_buff *skb,
@@ -696,7 +697,8 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 		dev_kfree_skb_any(skb);
 
 		spin_lock_irqsave(&dev->req_lock, flags);
-		if (dev->tx_skb_hold_count < dev->dl_max_pkts_per_xfer) {
+		if ((dev->tx_skb_hold_count < dev->dl_max_pkts_per_xfer)
+				&& (length < (dev->dl_max_xfer_size - dev->net->mtu))) {
 			if (dev->no_tx_req_used > TX_REQ_THRESHOLD) {
 				list_add(&req->list, &dev->tx_reqs);
 				spin_unlock_irqrestore(&dev->req_lock, flags);
@@ -1167,6 +1169,16 @@ int gether_get_ifname(struct net_device *net, char *name, int len)
 }
 EXPORT_SYMBOL_GPL(gether_get_ifname);
 
+void gether_update_dl_max_xfer_size(struct gether *link, uint32_t s)
+{
+	struct eth_dev		*dev = link->ioport;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->dl_max_xfer_size = s;
+	spin_unlock_irqrestore(&dev->lock, flags);
+}
+
 /**
  * gether_cleanup - remove Ethernet-over-USB device
  * Context: may sleep
@@ -1237,6 +1249,7 @@ struct net_device *gether_connect(struct gether *link)
 		dev->wrap = link->wrap;
 		dev->ul_max_pkts_per_xfer = link->ul_max_pkts_per_xfer;
 		dev->dl_max_pkts_per_xfer = link->dl_max_pkts_per_xfer;
+		dev->dl_max_xfer_size = link->dl_max_transfer_len;
 
 		spin_lock(&dev->lock);
 		dev->tx_skb_hold_count = 0;

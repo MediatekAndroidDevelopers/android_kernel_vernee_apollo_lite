@@ -22,7 +22,7 @@
 
 #include "gadget_chips.h"
 
-#define QMULT_DEFAULT 5
+#define QMULT_DEFAULT 10
 
 /*
  * dev_addr: initial value
@@ -77,6 +77,7 @@ struct gether {
 	u32				fixed_in_len;
 	unsigned		ul_max_pkts_per_xfer;
 	unsigned		dl_max_pkts_per_xfer;
+	unsigned		dl_max_transfer_len;
 	bool				multi_pkt_xfer;
 	bool				supports_multi_frame;
 	struct sk_buff			*(*wrap)(struct gether *port,
@@ -88,6 +89,7 @@ struct gether {
 	/* called on network open/close */
 	void				(*open)(struct gether *);
 	void				(*close)(struct gether *);
+	struct rndis_packet_msg_type	*header;
 };
 
 #define	DEFAULT_FILTER	(USB_CDC_PACKET_TYPE_BROADCAST \
@@ -258,6 +260,7 @@ void gether_cleanup(struct eth_dev *dev);
 /* connect/disconnect is handled by individual functions */
 struct net_device *gether_connect(struct gether *);
 void gether_disconnect(struct gether *);
+void gether_update_dl_max_xfer_size(struct gether *link, uint32_t s);
 
 /* Some controllers can't support CDC Ethernet (ECM) ... */
 static inline bool can_support_ecm(struct usb_gadget *gadget)
