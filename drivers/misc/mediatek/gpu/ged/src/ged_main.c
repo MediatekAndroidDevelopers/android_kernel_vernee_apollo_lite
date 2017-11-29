@@ -1,9 +1,14 @@
 /*
- * (C) Copyright 2010
- * MediaTek <www.MediaTek.com>
+ * Copyright (C) 2015 MediaTek Inc.
  *
- * MTK GPU Extension Device
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/cdev.h>
@@ -20,7 +25,6 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
-//#include <mach/system.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/semaphore.h>
@@ -47,17 +51,19 @@
 
 #ifdef GED_DEBUG
 #define GED_LOG_BUF_COMMON_GLES "GLES"
-static GED_LOG_BUF_HANDLE ghLogBuf_GLES = 0;
-GED_LOG_BUF_HANDLE ghLogBuf_GED = 0;
+static GED_LOG_BUF_HANDLE ghLogBuf_GLES;
+GED_LOG_BUF_HANDLE ghLogBuf_GED;
 #endif
 
 #define GED_LOG_BUF_COMMON_HWC "HWC"
-static GED_LOG_BUF_HANDLE ghLogBuf_HWC = 0;
+static GED_LOG_BUF_HANDLE ghLogBuf_HWC;
+#define GED_LOG_BUF_COMMON_HWC_ERR "HWC_err"
+static GED_LOG_BUF_HANDLE ghLogBuf_HWC_ERR;
 #define GED_LOG_BUF_COMMON_FENCE "FENCE"
-static GED_LOG_BUF_HANDLE ghLogBuf_FENCE = 0;
+static GED_LOG_BUF_HANDLE ghLogBuf_FENCE;
 
-GED_LOG_BUF_HANDLE ghLogBuf_DVFS = 0;
-GED_LOG_BUF_HANDLE ghLogBuf_ged_srv = 0;
+GED_LOG_BUF_HANDLE ghLogBuf_DVFS;
+GED_LOG_BUF_HANDLE ghLogBuf_ged_srv;
 
 /******************************************************************************
  * GED File operations
@@ -121,7 +127,7 @@ static long ged_dispatch(struct file *pFile, GED_BRIDGE_PACKAGE *psBridgePackage
 		}
 
 		if (psBridgePackageKM->i32OutBufferSize > 0) {
-			pvOut = kmalloc(psBridgePackageKM->i32OutBufferSize, GFP_KERNEL);
+			pvOut = kzalloc(psBridgePackageKM->i32OutBufferSize, GFP_KERNEL);
 
 			if (pvOut == NULL)
 				goto dispatch_exit;
@@ -180,17 +186,14 @@ static long ged_dispatch(struct file *pFile, GED_BRIDGE_PACKAGE *psBridgePackage
 		case GED_BRIDGE_COMMAND_GE_ALLOC:
 			SET_FUNC_AND_CHECK(ged_bridge_ge_alloc, GE_ALLOC);
 			break;
-		case GED_BRIDGE_COMMAND_GE_RETAIN:
-			SET_FUNC_AND_CHECK(ged_bridge_ge_retain, GE_RETAIN);
-			break;
-		case GED_BRIDGE_COMMAND_GE_RELEASE:
-			SET_FUNC_AND_CHECK(ged_bridge_ge_release, GE_RELEASE);
-			break;
 		case GED_BRIDGE_COMMAND_GE_GET:
 			SET_FUNC_AND_CHECK(ged_bridge_ge_get, GE_GET);
 			break;
 		case GED_BRIDGE_COMMAND_GE_SET:
 			SET_FUNC_AND_CHECK(ged_bridge_ge_set, GE_SET);
+			break;
+		case GED_BRIDGE_COMMAND_GE_INFO:
+			SET_FUNC_AND_CHECK(ged_bridge_ge_info, GE_INFO);
 			break;
 		default:
 			GED_LOGE("Unknown Bridge ID: %u\n", GED_GET_BRIDGE_ID(psBridgePackageKM->ui32FunctionID));
@@ -199,40 +202,6 @@ static long ged_dispatch(struct file *pFile, GED_BRIDGE_PACKAGE *psBridgePackage
 
 		if (pFunc)
 			ret = pFunc(pvIn, pvOut);
-
-		switch (GED_GET_BRIDGE_ID(psBridgePackageKM->ui32FunctionID)) {
-		case GED_BRIDGE_COMMAND_GE_ALLOC:
-			{
-				GED_BRIDGE_OUT_GE_ALLOC *out = (GED_BRIDGE_OUT_GE_ALLOC *)pvOut;
-
-				if (out->eError == GED_OK) {
-					ged_ge_init_context(&pFile->private_data);
-					ged_ge_context_ref(pFile->private_data, out->ge_hnd);
-				}
-			}
-			break;
-		case GED_BRIDGE_COMMAND_GE_RETAIN:
-			{
-				GED_BRIDGE_IN_GE_RETAIN *in = (GED_BRIDGE_IN_GE_RETAIN *)pvIn;
-				GED_BRIDGE_OUT_GE_RETAIN *out = (GED_BRIDGE_OUT_GE_RETAIN *)pvOut;
-
-				if (out->eError == GED_OK) {
-					ged_ge_init_context(&pFile->private_data);
-					ged_ge_context_ref(pFile->private_data, in->ge_hnd);
-				}
-			}
-			break;
-		case GED_BRIDGE_COMMAND_GE_RELEASE:
-			{
-				GED_BRIDGE_IN_GE_RELEASE *in = (GED_BRIDGE_IN_GE_RELEASE *)pvIn;
-				GED_BRIDGE_OUT_GE_RELEASE *out = (GED_BRIDGE_OUT_GE_RELEASE *)pvOut;
-
-				if (out->eError == GED_OK)
-					ged_ge_context_deref(pFile->private_data, in->ge_hnd);
-
-			}
-			break;
-		}
 
 		if (psBridgePackageKM->i32OutBufferSize > 0)
 		{
@@ -353,6 +322,8 @@ static void ged_exit(void)
 	ghLogBuf_FENCE = 0;
 	ged_log_buf_free(ghLogBuf_HWC);
 	ghLogBuf_HWC = 0;
+	ged_log_buf_free(ghLogBuf_HWC_ERR);
+	ghLogBuf_HWC_ERR = 0;
 
 	ged_dvfs_system_exit();
 
@@ -441,6 +412,8 @@ static int ged_init(void)
 	ghLogBuf_GED = ged_log_buf_alloc(32, 64 * 32, GED_LOG_BUF_TYPE_RINGBUFFER, "GED internal", NULL);
 #endif
 	ghLogBuf_HWC = ged_log_buf_alloc(4096, 128 * 4096, GED_LOG_BUF_TYPE_RINGBUFFER, GED_LOG_BUF_COMMON_HWC, NULL);
+	ghLogBuf_HWC_ERR = ged_log_buf_alloc(2048, 2048 * 128,
+			GED_LOG_BUF_TYPE_RINGBUFFER, GED_LOG_BUF_COMMON_HWC_ERR, NULL);
 	ghLogBuf_FENCE = ged_log_buf_alloc(256, 128 * 256, GED_LOG_BUF_TYPE_RINGBUFFER, GED_LOG_BUF_COMMON_FENCE, NULL);
 
 #ifdef GED_DVFS_DEBUG_BUF

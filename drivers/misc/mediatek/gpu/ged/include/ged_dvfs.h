@@ -11,6 +11,9 @@
  * GNU General Public License for more details.
  */
 
+#ifndef __GED_DVFS_H__
+#define __GED_DVFS_H__
+
 #include <linux/types.h>
 #include "ged_type.h"
 
@@ -70,6 +73,7 @@ typedef enum GED_DVFS_TUNING_MODE_TAG
 #define GED_EVENT_BOOST_HOST      (1 << 7)
 #define GED_EVENT_VR      (1 << 8)
 #define GED_EVENT_VILTE_VID      (1 << 9)
+#define GED_EVENT_LCD      (1 << 10)
 
 #define GED_EVENT_FORCE_ON  (1 << 0)
 #define GED_EVENT_FORCE_OFF  (1 << 1)
@@ -121,5 +125,4 @@ void ged_dvfs_gpu_clock_switch_notify(bool bSwitch);
 GED_ERROR ged_dvfs_system_init(void);
 void ged_dvfs_system_exit(void);
 
-unsigned int hps_get_per_cpu_load(int cpu, int isReset);
-
+#endif
