@@ -7,9 +7,9 @@
  * Foundation, and any use by you of this program is subject to the terms
  * of such GNU licence.
  *
- *
- *
- *
+ * A copy of the licence is included with the program, and can also be obtained
+ * from Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301, USA.
  *
  */
 
@@ -22,7 +22,7 @@
  * Attached value: number in kHz
  * Default value: NA
  */
-#define GPU_FREQ_KHZ_MAX (5000)
+#define GPU_FREQ_KHZ_MAX 5000
 /**
  * Minimum frequency GPU will be clocked at. Given in kHz.
  * This must be specified as there is no default value.
@@ -30,16 +30,7 @@
  * Attached value: number in kHz
  * Default value: NA
  */
-#define GPU_FREQ_KHZ_MIN (5000)
-
-/**
- * Values used for determining the GPU frequency based on the LogicTile type
- * Used by the function kbase_get_platform_logic_tile_type
- */
-#define VE_VIRTEX6_GPU_FREQ_MIN 5000
-#define VE_VIRTEX6_GPU_FREQ_MAX 5000
-#define VE_VIRTEX7_GPU_FREQ_MIN 40000
-#define VE_VIRTEX7_GPU_FREQ_MAX 40000
+#define GPU_FREQ_KHZ_MIN 5000
 
 /**
  * CPU_SPEED_FUNC - A pointer to a function that calculates the CPU clock
@@ -50,7 +41,7 @@
  * Attached value: A kbase_cpu_clk_speed_func.
  * Default Value:  NA
  */
-#define CPU_SPEED_FUNC (&kbase_get_vexpress_cpu_clock_speed)
+#define CPU_SPEED_FUNC (&kbase_cpuprops_get_default_clock_speed)
 
 /**
  * GPU_SPEED_FUNC - A pointer to a function that calculates the GPU clock
