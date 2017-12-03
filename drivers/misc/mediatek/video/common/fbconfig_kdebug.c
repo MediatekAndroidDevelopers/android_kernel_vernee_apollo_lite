@@ -94,6 +94,7 @@ bool fbconfig_start_LCM_config;
 #define DP_COLOR_BITS_PER_PIXEL(color)    ((0x0003FF00 & color) >>  8)
 #endif
 
+
 struct dentry *ConfigPara_dbgfs = NULL;
 CONFIG_RECORD_LIST head_list;
 LCM_REG_READ reg_read;
@@ -505,20 +506,20 @@ static long fbconfig_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 	break;
 	case FB_LAYER_GET_EN:
 	{
-		pr_debug("[FB_LAYER_GET_EN] not supported anymore\n");
-		return 0;
+		pr_debug("[FB_LAYER_GET_EN] not support any more\n");
+		return  0;
 	}
 	break;
 	case FB_LAYER_GET_INFO:
 	{
-		pr_debug("[FB_LAYER_GET_INFO] not supported anymore\n");
-		return 0;
+		pr_debug("[FB_LAYER_GET_INFO] not support any more\n");
+		return  0;
 	}
 	break;
 	case FB_LAYER_DUMP:
 	{
-		pr_debug("[FB_LAYER_DUMP] not supported anymore\n");
-		return 0;
+		pr_debug("[FB_LAYER_DUMP] not support any more\n");
+		return  0;
 	}
 	break;
 	case LCM_GET_ESD:
@@ -1370,8 +1371,10 @@ static const struct file_operations fbconfig_fops = {
 
 void PanelMaster_Init(void)
 {
+#if defined(CONFIG_MT_ENG_BUILD)
 	ConfigPara_dbgfs = debugfs_create_file("fbconfig",
 					       S_IFREG | S_IRUGO, NULL, (void *)0, &fbconfig_fops);
+#endif
 
 	INIT_LIST_HEAD(&head_list.list);
 }

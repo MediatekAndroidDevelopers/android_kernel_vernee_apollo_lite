@@ -3412,6 +3412,15 @@ int ddp_dsi_stop(DISP_MODULE_ENUM module, void *cmdq_handle)
 	return 0;
 }
 
+/*TUI will use the api*/
+int dsi_enable_irq(DISP_MODULE_ENUM module, void *handle, unsigned int enable)
+{
+	if (module == DISP_MODULE_DSI0 || module == DISP_MODULE_DSIDUAL)
+		DSI_OUTREGBIT(handle, DSI_INT_ENABLE_REG, DSI_REG[0]->DSI_INTEN, FRAME_DONE_INT_EN, enable);
+
+	return 0;
+}
+
 #if 0
 int ddp_dsi_switch_lcm_mode(DISP_MODULE_ENUM module, void *params)
 {
@@ -3960,6 +3969,8 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 	int i = 0;
 	int ret = 0;
 	unsigned int value = 0;
+	unsigned int try_cnt = 1;
+
 	DISPFUNC();
 	/* DSI_DumpRegisters(module,1); */
 
@@ -3978,11 +3989,21 @@ int ddp_dsi_power_off(DISP_MODULE_ENUM module, void *cmdq_handle)
 		/* make sure enter ulps mode */
 		while (1) {
 			mdelay(1);
+
 			value = INREG32(&DSI_REG[0]->DSI_STATE_DBG1);
 			value = value >> 24;
-			if (value == 0x20)
+			if (value == 0x20) {
+				if (try_cnt > 1)
+					DDPMSG("dsi in ulps mode, try_cnt(%u)\n", try_cnt);
 				break;
-			DDPMSG("dsi not in ulps mode, try again...\n");
+			}
+
+			if (try_cnt == 1)
+				DDPERR("dsi not in ulps mode, try again...(%u)\n", try_cnt);
+			else if (!(try_cnt & 0x3FF))
+				DDPMSG("dsi not in ulps mode, try again...(%u)\n", try_cnt);
+
+			try_cnt++;
 		}
 		/* clear lane_num when enter ulps */
 		for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++)
