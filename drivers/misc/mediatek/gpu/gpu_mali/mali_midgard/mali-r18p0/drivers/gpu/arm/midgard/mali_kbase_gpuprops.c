@@ -440,6 +440,10 @@ int kbase_gpuprops_populate_user_buffer(struct kbase_device *kbdev)
 	u32 size = 0;
 	u8 *p;
 
+	kbdev->gpu_props.props.core_props.product_id = GPU_ID_PI_T86X;
+	kbdev->gpu_props.props.core_props.major_revision = 0;
+	kbdev->gpu_props.props.core_props.minor_revision = 2;
+
 	for (i = 0; i < count; i++) {
 		/* 4 bytes for the ID, and the size of the property */
 		size += 4 + gpu_property_mapping[i].size;
