@@ -11,12 +11,16 @@
 # GNU General Public License for more details.
 #
 
-#include $(srctree)/drivers/misc/mediatek/Makefile.custom
-
 obj-y := cameraisp_dummy.o
 
 ifeq ($(CONFIG_ARCH_MT6580),y)
   obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
+endif
+
+ifneq ($(CONFIG_ARCH_MTK_PROJECT),"fpga6570_emmc")
+ifeq ($(CONFIG_ARCH_MT6570),y)
+  obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
+endif
 endif
 
 ifeq ($(CONFIG_ARCH_MT6735M),y)
@@ -47,6 +51,10 @@ ifeq ($(CONFIG_ARCH_MT8163),y)
   obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
 endif
 
+ifeq ($(CONFIG_ARCH_MT8167),y)
+  obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
+endif
+
 ifeq ($(CONFIG_ARCH_MT8173),y)
   obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
 endif
@@ -55,6 +63,8 @@ ifeq ($(CONFIG_ARCH_MT6797),y)
   obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
 endif
 
-
+ifeq ($(CONFIG_ARCH_MT6757),y)
+  obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/
+endif
 #this moment do not have other folder
 #obj-y += $(subst ",,$(CONFIG_MTK_PLATFORM))/

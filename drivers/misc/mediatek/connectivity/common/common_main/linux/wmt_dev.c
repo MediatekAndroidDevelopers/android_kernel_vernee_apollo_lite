@@ -217,7 +217,7 @@ static INT32 wmt_fb_notifier_callback(struct notifier_block *self, ULONG event, 
 		g_es_lr_flag_for_quick_sleep = 0;
 		g_es_lr_flag_for_lpbk_onoff = 1;
 		osal_unlock_sleepable_lock(&g_es_lr_lock);
-                WMT_WARN_FUNC("@@@@@@@@@@wmt enter UNBLANK @@@@@@@@@@@@@@\n");
+		WMT_WARN_FUNC("@@@@@@@@@@wmt enter UNBLANK @@@@@@@@@@@@@@\n");
 		if (hif_info == 0)
 			break;
 		schedule_work(&gPwrOnOffWork);

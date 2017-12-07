@@ -96,6 +96,8 @@ static struct cdev *FDVT_cdev;
 static struct class *FDVT_class;
 static wait_queue_head_t g_FDVTWQ;
 static u32 g_FDVTIRQ = 0 , g_FDVTIRQMSK = 0x00000001;
+static DEFINE_SPINLOCK(g_spinLock);
+static unsigned int g_drvOpened;
 
 static u8 *pBuff;
 static u8 *pread_buf;
@@ -605,12 +607,17 @@ static int FDVT_SetRegHW(FDVTRegIO *a_pstCfg)
 {
 	FDVTRegIO *pREGIO = NULL;
 	u32 i = 0;
-	if (NULL == a_pstCfg) {
+	if (a_pstCfg == NULL) {
 		LOG_DBG("Null input argrment\n");
 		return -EINVAL;
 	}
 
 	pREGIO = (FDVTRegIO *)a_pstCfg;
+
+	if (pREGIO->u4Count > FDVT_DRAM_REGCNT) {
+		LOG_DBG("Buffer Size Exceeded!\n");
+		return -EFAULT;
+	}
 
 	if (copy_from_user((void *)pFDVTWriteBuffer.u4Addr, (void *) pREGIO->pAddr, pREGIO->u4Count * sizeof(u32))) {
 		LOG_DBG("ioctl copy from user failed\n");
@@ -643,11 +650,20 @@ static int FDVT_SetRegHW(FDVTRegIO *a_pstCfg)
 static int FDVT_ReadRegHW(FDVTRegIO *a_pstCfg)
 {
 	int ret = 0;
-	int size = a_pstCfg->u4Count * 4;
-	int i;
+	int size = 0;
+	int i = 0;
 
-	if (size > buf_size)
-		LOG_DBG("size too big\n");
+	if (a_pstCfg == NULL) {
+		LOG_DBG("Null input argrment\n");
+		return -EINVAL;
+	}
+
+	if (a_pstCfg->u4Count > FDVT_DRAM_REGCNT) {
+		LOG_DBG("Buffer Size Exceeded!\n");
+		return -EFAULT;
+	}
+
+	size = a_pstCfg->u4Count * 4;
 
 	if (copy_from_user(pFDVTReadBuffer.u4Addr,  a_pstCfg->pAddr, size) != 0) {
 		LOG_DBG("copy_from_user failed\n");
@@ -683,7 +699,7 @@ static int FDVT_WaitIRQ(u32 *u4IRQMask)
 {
 	int timeout;
 	/* timeout = wait_event_interruptible_timeout(g_FDVTWQ, (g_FDVTIRQMSK & g_FDVTIRQ), ms_to_jiffies(500)); */
-	timeout = wait_event_interruptible_timeout(g_FDVTWQ, (g_FDVTIRQMSK & g_FDVTIRQ), us_to_jiffies(15 * 1000000));	
+	timeout = wait_event_interruptible_timeout(g_FDVTWQ, (g_FDVTIRQMSK & g_FDVTIRQ), us_to_jiffies(15 * 1000000));
 
 	if (timeout == 0) {
 		LOG_DBG("wait_event_interruptible_timeout timeout, %d, %d\n", g_FDVTIRQMSK, g_FDVTIRQ);
@@ -720,7 +736,12 @@ static long FDVT_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int ret = 0;
 
-	if (_IOC_NONE != _IOC_DIR(cmd)) {
+	if (_IOC_SIZE(cmd) > buf_size) {
+		LOG_DBG("Buffer Size Exceeded!\n");
+		return -EFAULT;
+	}
+
+	if (_IOC_DIR(cmd) != _IOC_NONE) {
 		/* IO write */
 		if (_IOC_WRITE & _IOC_DIR(cmd)) {
 			if (copy_from_user(pBuff , (void *) arg, _IOC_SIZE(cmd))) {
@@ -936,6 +957,16 @@ static int FDVT_open(struct inode *inode, struct file *file)
 	INT32 ret = 0;
 
 	LOG_DBG("[FDVT_DEBUG] FDVT_open\n");
+
+	spin_lock(&g_spinLock);
+	if (g_drvOpened) {
+		spin_unlock(&g_spinLock);
+		LOG_DBG("Opened, return -EBUSY\n");
+		return -EBUSY;
+	}
+	g_drvOpened = 1;
+	spin_unlock(&g_spinLock);
+
 	mt_fdvt_clk_ctrl(1); /* ISP help enable */
 	if (pBuff != NULL)
 		LOG_DBG("pBuff is not null\n");
@@ -996,6 +1027,11 @@ static int FDVT_release(struct inode *inode, struct file *file)
 	g_FDVTIRQ = ioread32((void *)FDVT_INT);
 	mb();
 	mt_fdvt_clk_ctrl(0); /* ISP help disable */
+
+	spin_lock(&g_spinLock);
+	g_drvOpened = 0;
+	spin_unlock(&g_spinLock);
+
 	return 0;
 }
 
@@ -1032,7 +1068,7 @@ static int FDVT_probe(struct platform_device *dev)
 		LOG_ERR("unable to map IMGSYS_CONFIG_BASE registers!!!\n");
 		return -ENODEV;
 	}
-	
+
 	LOG_DBG("[FDVT_DEBUG] IMGSYS_CONFIG_BASE: %lx\n", (unsigned long)IMGSYS_CONFIG_BASE);
 
 	node = of_find_compatible_node(NULL, NULL, "mediatek,camsys_config");
@@ -1098,10 +1134,7 @@ static int FDVT_probe(struct platform_device *dev)
 	}
 
 	nr_fdvt_devs = new_count;
-	if (dev == NULL) {
-		dev_err(&dev->dev, "dev is NULL");
-		return -ENXIO;
-	}
+
 /*
 		// Register char driver
 		if((Ret = ISP_RegCharDev()))

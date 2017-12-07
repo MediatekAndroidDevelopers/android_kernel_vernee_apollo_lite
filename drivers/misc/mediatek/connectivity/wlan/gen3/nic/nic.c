@@ -426,13 +426,6 @@ VOID nicSDIOInit(IN P_ADAPTER_T prAdapter)
 
 }				/* end of nicSDIOInit() */
 
-#if defined(MT6797) /* chk if HIF clk src is on */
-#define TOP_AON_CFG_BASE 0x180c1000
-#define TOP_CKMON	(0x10c)
-#define TOP_PWRCTLCR	(0x110)
-#define TOP_CKGEN3	(0x114)
-#endif
-
 /*----------------------------------------------------------------------------*/
 /*!
 * @brief Read interrupt status from hardware
@@ -447,13 +440,6 @@ VOID nicSDIOInit(IN P_ADAPTER_T prAdapter)
 VOID nicSDIOReadIntStatus(IN P_ADAPTER_T prAdapter, OUT PUINT_32 pu4IntStatus)
 {
 	P_SDIO_CTRL_T prSDIOCtrl;
-#if defined(MT6797) /* chk if HIF clk src is on */
-	UINT_8 *connTopAonBaseAddr = ioremap(TOP_AON_CFG_BASE, 0x120);
-	UINT_8 *connTopCkMonAddr = (UINT_8 *)connTopAonBaseAddr + TOP_CKMON;
-	UINT_8 *connTopPwrCtrlAddr = (UINT_8 *)connTopAonBaseAddr + TOP_PWRCTLCR;
-	UINT_8 *connTopCkGen3Addr = (UINT_8 *)connTopAonBaseAddr + TOP_CKGEN3;
-	UINT_32 u4CkMon, u4PwrCtrl, u4CkGen3, i, u4CpuPcr = 0;
-#endif
 
 	DEBUGFUNC("nicSDIOReadIntStatus");
 
@@ -462,30 +448,6 @@ VOID nicSDIOReadIntStatus(IN P_ADAPTER_T prAdapter, OUT PUINT_32 pu4IntStatus)
 
 	prSDIOCtrl = prAdapter->prSDIOCtrl;
 	ASSERT(prSDIOCtrl);
-
-#if defined(MT6797) /* chk if HIF clk src is on */
-	u4PwrCtrl = readl((volatile UINT_32 *)connTopPwrCtrlAddr);
-	u4PwrCtrl &= BITS(28, 29);
-	u4PwrCtrl >>= 28;
-
-	if (u4PwrCtrl != 0x1) {
-		u4CkMon = readl((volatile UINT_32 *)connTopCkMonAddr);
-		u4PwrCtrl = readl((volatile UINT_32 *)connTopPwrCtrlAddr);
-		u4CkGen3 = readl((volatile UINT_32 *)connTopCkGen3Addr);
-		DBGLOG(INTR, ERROR, "%p %p %p %p, CkMon = 0x%x, PwrCtrl = 0x%x, CkGen3 = 0x%x\n",
-			connTopAonBaseAddr, connTopCkMonAddr, connTopPwrCtrlAddr, connTopCkGen3Addr,
-			u4CkMon, u4PwrCtrl, u4CkGen3);
-
-		for (i = 0; i < 100; i++) {
-			u4CpuPcr = wmt_plat_read_cpupcr();
-			DBGLOG(INTR, ERROR, "cpupcr = 0x%x\n", u4CpuPcr);
-		}
-		glResetTrigger(prAdapter);
-		iounmap(connTopAonBaseAddr);
-		return;
-	}
-	iounmap(connTopAonBaseAddr);
-#endif
 
 	HAL_PORT_RD(prAdapter,
 		    MCR_WHISR,
@@ -1815,6 +1777,9 @@ nicConfigPowerSaveProfile(IN P_ADAPTER_T prAdapter,
 /* prAdapter->rWlanInfo.ePowerSaveMode.ucPsProfile = (UINT_8)ePwrMode; */
 	prAdapter->rWlanInfo.arPowerSaveMode[ucBssIndex].ucBssIndex = ucBssIndex;
 	prAdapter->rWlanInfo.arPowerSaveMode[ucBssIndex].ucPsProfile = (UINT_8) ePwrMode;
+
+	if ((ucBssIndex == prAdapter->prAisBssInfo->ucBssIndex) && prAdapter->rWlanInfo.fgEnSpecPwrMgt)
+		return WLAN_STATUS_SUCCESS;
 
 	return wlanSendSetQueryCmd(prAdapter,
 				   CMD_ID_POWER_SAVE_MODE,
@@ -3879,3 +3844,87 @@ BOOLEAN nicIsEcoVerEqualOrLaterTo(UINT_8 ucEcoVer)
 
 	return TRUE;
 }
+
+WLAN_STATUS nicSetUapsdParam(IN P_ADAPTER_T prAdapter,
+	IN P_PARAM_CUSTOM_UAPSD_PARAM_STRUCT_T prUapsdParams, IN ENUM_NETWORK_TYPE_T eNetworkTypeIdx)
+{
+	CMD_CUSTOM_UAPSD_PARAM_STRUCT_T rCmdUapsdParam;
+	P_PM_PROFILE_SETUP_INFO_T prPmProfSetupInfo;
+	P_BSS_INFO_T prBssInfo;
+	WLAN_STATUS ret;
+
+	DEBUGFUNC("nicSetUApsdParam");
+
+	ASSERT(prAdapter);
+	ASSERT(prUapsdParams);
+
+	if (eNetworkTypeIdx >= NETWORK_TYPE_NUM) {
+		DBGLOG(NIC, ERROR, "nicSetUApsdParam Invalid eNetworkTypeIdx\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	prBssInfo = prAdapter->aprBssInfo[eNetworkTypeIdx];
+	prPmProfSetupInfo = &prBssInfo->rPmProfSetupInfo;
+
+	kalMemZero(&rCmdUapsdParam, sizeof(CMD_CUSTOM_UAPSD_PARAM_STRUCT_T));
+
+	rCmdUapsdParam.fgEnAPSD = prUapsdParams->fgEnAPSD;
+	rCmdUapsdParam.fgEnAPSD_AcBe = prUapsdParams->fgEnAPSD_AcBe;
+	rCmdUapsdParam.fgEnAPSD_AcBk = prUapsdParams->fgEnAPSD_AcBk;
+	rCmdUapsdParam.fgEnAPSD_AcVo = prUapsdParams->fgEnAPSD_AcVo;
+	rCmdUapsdParam.fgEnAPSD_AcVi = prUapsdParams->fgEnAPSD_AcVi;
+	rCmdUapsdParam.ucMaxSpLen = prUapsdParams->ucMaxSpLen;
+
+	/* Fill BmpDeliveryAC and BmpTriggerAC by UapsdParams */
+	prPmProfSetupInfo->ucBmpDeliveryAC =
+	    ((prUapsdParams->fgEnAPSD_AcBe << 0) |
+	     (prUapsdParams->fgEnAPSD_AcBk << 1) |
+	     (prUapsdParams->fgEnAPSD_AcVi << 2) |
+	     (prUapsdParams->fgEnAPSD_AcVo << 3));
+
+	prPmProfSetupInfo->ucBmpTriggerAC =
+	    ((prUapsdParams->fgEnAPSD_AcBe << 0) |
+	     (prUapsdParams->fgEnAPSD_AcBk << 1) |
+	     (prUapsdParams->fgEnAPSD_AcVi << 2) |
+	     (prUapsdParams->fgEnAPSD_AcVo << 3));
+
+	prPmProfSetupInfo->ucUapsdSp = prUapsdParams->ucMaxSpLen;
+
+	DBGLOG(NIC, INFO, "nicSetUApsdParam EnAPSD[%d] Be[%d] Bk[%d] Vo[%d] Vi[%d] SPLen[%d]\n",
+		rCmdUapsdParam.fgEnAPSD, rCmdUapsdParam.fgEnAPSD_AcBe, rCmdUapsdParam.fgEnAPSD_AcBk,
+		rCmdUapsdParam.fgEnAPSD_AcVo, rCmdUapsdParam.fgEnAPSD_AcVi, rCmdUapsdParam.ucMaxSpLen);
+
+	switch (eNetworkTypeIdx) {
+	case NETWORK_TYPE_AIS:
+		ret = wlanSendSetQueryCmd(prAdapter,
+			CMD_ID_SET_UAPSD_PARAM,
+			TRUE,
+			FALSE,
+			FALSE,
+			NULL,
+			NULL,
+			sizeof(CMD_CUSTOM_UAPSD_PARAM_STRUCT_T),
+			(PUINT_8)&rCmdUapsdParam, NULL, 0);
+			break;
+
+	case NETWORK_TYPE_P2P:
+		ret = wlanoidSendSetQueryP2PCmd(prAdapter,
+			CMD_ID_SET_UAPSD_PARAM,
+			prBssInfo->ucBssIndex,
+			TRUE,
+			FALSE,
+			FALSE,
+			NULL,
+			NULL,
+			sizeof(CMD_CUSTOM_UAPSD_PARAM_STRUCT_T),
+			(PUINT_8)&rCmdUapsdParam, NULL, 0);
+			break;
+
+	default:
+		ret = WLAN_STATUS_FAILURE;
+		break;
+	}
+
+	return ret;
+}
+

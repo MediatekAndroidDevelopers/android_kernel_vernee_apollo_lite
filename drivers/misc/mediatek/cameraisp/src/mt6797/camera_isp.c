@@ -1,7 +1,18 @@
+/*
+* Copyright (C) 2016 MediaTek Inc.
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 as
+* published by the Free Software Foundation.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+* See http://www.gnu.org/licenses/gpl-2.0.html for more details.
+*/
+
 /******************************************************************************
  * camera_isp.c - MT6797 Linux ISP Device Driver
- *
- * Copyright 2008-2016 MediaTek Co.,Ltd.
  *
  * DESCRIPTION:
  *     This file provid the other drivers ISP relative functions
@@ -24,8 +35,8 @@
 #include <linux/atomic.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
-#include "inc/mt_typedefs.h"
 
+#include <linux/vmalloc.h>
 /*#include <mach/hardware.h>*/
 /* #include <mach/mt6593_pll.h> */
 /* #include <mach/camera_isp.h> */
@@ -51,7 +62,7 @@
 #include <linux/init.h>
 
 /*for SMI BW debug log*/
-#include<../../../smi/smi_debug.h>
+#include "../../../smi/smi_debug.h"
 
 #ifdef CONFIG_COMPAT
 /* 64 bit */
@@ -91,11 +102,14 @@
 #endif
 typedef unsigned char           MUINT8;
 typedef unsigned int            MUINT32;
+typedef unsigned int            UINT32;
+
 /*  */
 typedef signed char             MINT8;
 typedef signed int              MINT32;
 /*  */
 typedef bool                    MBOOL;
+typedef unsigned char           BOOL;
 /*  */
 #ifndef MTRUE
 #define MTRUE               1
@@ -476,6 +490,61 @@ static struct isp_device *isp_devs;
 static int nr_isp_devs;
 #endif
 
+#define AEE_DUMP_BY_USING_ION_MEMORY
+#define AEE_DUMP_REDUCE_MEMORY
+#ifdef AEE_DUMP_REDUCE_MEMORY
+/* ion */
+
+#ifdef AEE_DUMP_BY_USING_ION_MEMORY
+#include <ion.h>
+#include <mtk/ion_drv.h>
+#include <mtk/mtk_ion.h>
+
+struct isp_imem_memory {
+	void *handle;
+	int ion_fd;
+	uint64_t va;
+	uint32_t pa;
+	uint32_t length;
+};
+
+static struct ion_client *isp_p2_ion_client;
+static struct isp_imem_memory g_isp_p2_imem_buf;
+static DEFINE_MUTEX(gIspMutex);
+#endif
+static volatile bool g_bIonBufferAllocated;
+static unsigned int *g_pPhyISPBuffer;
+/* Kernel Warning */
+static unsigned int *g_pKWTpipeBuffer;
+static unsigned int *g_pKWCmdqBuffer;
+static unsigned int *g_pKWVirISPBuffer;
+/* Navtive Exception */
+static unsigned int *g_pTuningBuffer;
+static unsigned int *g_pTpipeBuffer;
+static unsigned int *g_pVirISPBuffer;
+static unsigned int *g_pCmdqBuffer;
+#else
+/* Kernel Warning */
+static unsigned int g_KWTpipeBuffer[(MAX_ISP_TILE_TDR_HEX_NO >> 2)];
+static unsigned int g_KWCmdqBuffer[(MAX_ISP_CMDQ_BUFFER_SIZE >> 2)];
+static unsigned int g_KWVirISPBuffer[(ISP_DIP_REG_SIZE >> 2)];
+/* Navtive Exception */
+static unsigned int g_PhyISPBuffer[(ISP_DIP_REG_SIZE >> 2)];
+static unsigned int g_TuningBuffer[(ISP_DIP_REG_SIZE >> 2)];
+static unsigned int g_TpipeBuffer[(MAX_ISP_TILE_TDR_HEX_NO >> 2)];
+static unsigned int g_VirISPBuffer[(ISP_DIP_REG_SIZE >> 2)];
+static unsigned int g_CmdqBuffer[(MAX_ISP_CMDQ_BUFFER_SIZE >> 2)];
+#endif
+static volatile bool g_bUserBufIsReady = MFALSE;
+static MUINT32 DumpBufferField;
+static volatile bool g_bDumpPhyISPBuf = MFALSE;
+static MUINT32 g_tdriaddr = 0xffffffff;
+static MUINT32 g_cmdqaddr = 0xffffffff;
+static ISP_GET_DUMP_INFO_STRUCT g_dumpInfo = {0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+static ISP_MEM_INFO_STRUCT g_TpipeBaseAddrInfo = {0x0, 0x0, NULL, 0x0};
+static ISP_MEM_INFO_STRUCT g_CmdqBaseAddrInfo = {0x0, 0x0, NULL, 0x0};
+static volatile MUINT32 m_CurrentPPB;
+
 #ifdef CONFIG_PM_WAKELOCKS
 struct wakeup_source isp_wake_lock;
 #else
@@ -803,7 +872,7 @@ typedef struct {
 	spinlock_t                      SpinLockIrqCnt[ISP_IRQ_TYPE_AMOUNT];
 	spinlock_t                      SpinLockRTBC;
 	spinlock_t                      SpinLockClock;
-	wait_queue_head_t               WaitQueueHead;
+	wait_queue_head_t               WaitQueueHead[ISP_IRQ_TYPE_AMOUNT];
 	/* wait_queue_head_t*              WaitQHeadList; */
 	volatile wait_queue_head_t      WaitQHeadList[SUPPORT_MAX_IRQ];
 	MUINT32                         UserCount;
@@ -821,6 +890,7 @@ typedef struct {
 
 
 static ISP_INFO_STRUCT IspInfo;
+static MBOOL    SuspnedRecord[ISP_DEV_NODE_NUM] = {0};
 
 typedef enum _eLOG_TYPE {
 	_LOG_DBG = 0,   /* currently, only used at ipl_buf_ctrl. to protect critical section */
@@ -3436,8 +3506,8 @@ static MINT32 ISP_DumpSeninfReg(void)
 	LOG_INF("- E. IMGPLL(0x%x)[HPM:0x114EC5,LPM:0xC8000]\n", ISP_RD32(CLOCK_CELL_BASE + 0x0264));
 	/*Sensor interface N3D CNT*/
 	ISP_WR32(ISP_SENINF0_BASE + 0x0100, 0x146);
-	LOG_INF("seninf:0110(0x%x)-0114(0x%x)\n", ISP_RD32(ISP_SENINF0_BASE + 0x0110),
-		ISP_RD32(ISP_SENINF0_BASE + 0x0114));
+	LOG_INF("seninf:0110(0x%x)-0114(0x%x)\n",
+		ISP_RD32(ISP_SENINF0_BASE + 0x0110), ISP_RD32(ISP_SENINF0_BASE + 0x0114));
 	/*Sensor interface Top mux and Package counter*/
 	LOG_INF("seninf:0008(0x%x)-0010(0x%x)-0a10(0x%x)-1a10(0x%x) 0a1c(0x%x)-1a1c(0x%x)-0a1c(0x%x)-1a1c(0x%x)\n", \
 		ISP_RD32(ISP_SENINF0_BASE + 0x0008), ISP_RD32(ISP_SENINF0_BASE + 0x0010), \
@@ -3789,46 +3859,368 @@ static MINT32 ISP_DumpReg(void)
 static MINT32 ISP_DumpDIPReg(void)
 {
 	MINT32 Ret = 0;
+	MUINT32 i, cmdqidx = 0;
+#ifdef AEE_DUMP_REDUCE_MEMORY
+	MUINT32 offset = 0;
+	long long OffsetAddr = 0;
+	MUINT32 ctrl_start;
+#else
+	MUINT32 offset = 0;
+	long long OffsetAddr = 0;
+	MUINT32 ctrl_start;
+#endif
 	/*  */
 	LOG_INF("- E.");
-	LOG_INF("isp: 15022000(0x%x)-15022004(0x%x)-15022008(0x%x)-1502200C(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0000), ISP_RD32(ISP_DIP_A_BASE + 0x0004), \
+	LOG_INF("g_bDumpPhyISPBuf:(0x%x), g_pPhyISPBuffer:(0x%p), g_bIonBuf:(0x%x)\n", g_bDumpPhyISPBuf,
+	g_pPhyISPBuffer, g_bIonBufferAllocated);
+#ifdef AEE_DUMP_REDUCE_MEMORY
+	if (g_bDumpPhyISPBuf == MFALSE) {
+		ctrl_start = ISP_RD32(ISP_DIP_A_BASE + 0x0000);
+		if (g_bIonBufferAllocated == MFALSE) {
+			if (g_pPhyISPBuffer != NULL) {
+				LOG_DBG("g_pPhyISPBuffer is not NULL:(0x%pK)\n", g_pPhyISPBuffer);
+				vfree(g_pPhyISPBuffer);
+				g_pPhyISPBuffer = NULL;
+			}
+			g_pPhyISPBuffer = vmalloc(ISP_DIP_REG_SIZE);
+			if (g_pPhyISPBuffer == NULL)
+				LOG_DBG("ERROR: g_pPhyISPBuffer kmalloc failed\n");
+
+			if (g_pKWTpipeBuffer != NULL) {
+				LOG_DBG("g_pKWTpipeBuffer is not NULL:(0x%pK)\n", g_pKWTpipeBuffer);
+				vfree(g_pKWTpipeBuffer);
+				g_pKWTpipeBuffer = NULL;
+			}
+			g_pKWTpipeBuffer = vmalloc(MAX_ISP_TILE_TDR_HEX_NO);
+			if (g_pKWTpipeBuffer == NULL)
+				LOG_DBG("ERROR: g_pKWTpipeBuffer kmalloc failed\n");
+
+			if (g_pKWCmdqBuffer != NULL) {
+				LOG_DBG("g_KWCmdqBuffer is not NULL:(0x%pK)\n", g_pKWCmdqBuffer);
+				vfree(g_pKWCmdqBuffer);
+				g_pKWCmdqBuffer = NULL;
+			}
+			g_pKWCmdqBuffer = vmalloc(MAX_ISP_CMDQ_BUFFER_SIZE);
+			if (g_pKWCmdqBuffer == NULL)
+				LOG_DBG("ERROR: g_KWCmdqBuffer kmalloc failed\n");
+
+			if (g_pKWVirISPBuffer != NULL) {
+				LOG_DBG("g_KWVirISPBuffer is not NULL:(0x%pK)\n", g_pKWVirISPBuffer);
+				vfree(g_pKWVirISPBuffer);
+				g_pKWVirISPBuffer = NULL;
+			}
+			g_pKWVirISPBuffer = vmalloc(ISP_DIP_REG_SIZE);
+			if (g_pKWVirISPBuffer == NULL)
+				LOG_DBG("ERROR: g_KWVirISPBuffer kmalloc failed\n");
+		}
+
+		if (g_pPhyISPBuffer != NULL) {
+			for (i = 0; i < (ISP_DIP_PHYSICAL_REG_SIZE >> 2); i = i + 4) {
+				g_pPhyISPBuffer[i] = ISP_RD32(ISP_DIP_A_BASE + (i*4));
+				g_pPhyISPBuffer[i+1] = ISP_RD32(ISP_DIP_A_BASE + ((i+1)*4));
+				g_pPhyISPBuffer[i+2] = ISP_RD32(ISP_DIP_A_BASE + ((i+2)*4));
+				g_pPhyISPBuffer[i+3] = ISP_RD32(ISP_DIP_A_BASE + ((i+3)*4));
+			}
+		} else {
+			LOG_INF("g_pPhyISPBuffer:(0x%pK)\n", g_pPhyISPBuffer);
+		}
+		g_dumpInfo.tdri_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x204);/* 0x15022204 */
+		g_dumpInfo.imgi_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x400);/* 0x15022400 */
+		g_dumpInfo.dmgi_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x520);/* 0x15022520 */
+		g_tdriaddr = g_dumpInfo.tdri_baseaddr;
+		for (cmdqidx = 0; cmdqidx < 32 ; cmdqidx++) {
+			if (ctrl_start & (0x1<<cmdqidx)) {
+				g_cmdqaddr = ISP_RD32(ISP_DIP_A_BASE + 0x108 + (cmdqidx*12));
+				break;
+			}
+		}
+		if ((g_TpipeBaseAddrInfo.MemPa != 0) && (g_TpipeBaseAddrInfo.MemVa != NULL)
+			&& (g_pKWTpipeBuffer != NULL)) {
+			/* to get frame tdri baseaddress, otherwide  you possible get one of the tdr bade addr*/
+			offset = ((g_tdriaddr & (~(g_TpipeBaseAddrInfo.MemSizeDiff-1)))-g_TpipeBaseAddrInfo.MemPa);
+			OffsetAddr = ((long long)g_TpipeBaseAddrInfo.MemVa)+offset;
+			if (copy_from_user(g_pKWTpipeBuffer, (void __user *)(OffsetAddr),
+				MAX_ISP_TILE_TDR_HEX_NO) != 0) {
+				LOG_ERR("cpy tpipe fail. tdriaddr:0x%x, MemVa:0x%llx,MemPa:0x%x, offset:0x%x\n",
+				g_tdriaddr, (long long)g_TpipeBaseAddrInfo.MemVa, g_TpipeBaseAddrInfo.MemPa, offset);
+			}
+		}
+		LOG_INF("tdraddr:0x%x,MemVa:0x%llx,MemPa:0x%x,MemSizeDiff:0x%x,offset:0x%x,g_pKWTpipeBuffer:0x%pK\n",
+		g_tdriaddr, (long long)g_TpipeBaseAddrInfo.MemVa, g_TpipeBaseAddrInfo.MemPa,
+		g_TpipeBaseAddrInfo.MemSizeDiff, offset, g_pKWTpipeBuffer);
+		if ((g_CmdqBaseAddrInfo.MemPa != 0) && (g_CmdqBaseAddrInfo.MemVa != NULL)
+				&& (g_pKWCmdqBuffer != NULL) && (g_pKWVirISPBuffer != NULL)) {
+			offset = (g_cmdqaddr-g_CmdqBaseAddrInfo.MemPa);
+			OffsetAddr = ((long long)g_CmdqBaseAddrInfo.MemVa)+(g_cmdqaddr-g_CmdqBaseAddrInfo.MemPa);
+			if (copy_from_user(g_pKWCmdqBuffer, (void __user *)(OffsetAddr),
+				MAX_ISP_CMDQ_BUFFER_SIZE) != 0) {
+				LOG_ERR("cpy cmdq fail. cmdqaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, offset:0x%x\n",
+					g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa,
+					g_CmdqBaseAddrInfo.MemPa, offset);
+			}
+			LOG_INF("cmdqidx:0x%x, cmdqaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, offset:0x%x\n",
+			cmdqidx, g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa, offset);
+			offset = offset+g_CmdqBaseAddrInfo.MemSizeDiff;
+			OffsetAddr = ((long long)g_CmdqBaseAddrInfo.MemVa)+offset;
+			if (copy_from_user(g_pKWVirISPBuffer, (void __user *)(OffsetAddr),
+				ISP_DIP_REG_SIZE) != 0) {
+				LOG_ERR("cpy vir isp fail.cmdqaddr:0x%x,MVa:0x%llx,MPa:0x%x,MSzDiff:0x%x,offset:0x%x\n",
+				g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa,
+				g_CmdqBaseAddrInfo.MemSizeDiff, offset);
+			}
+			LOG_INF("cmdqaddr:0x%x,MVa:0x%llx,MPa:0x%x,MSzDiff:0x%x\n",
+			g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa,
+			g_CmdqBaseAddrInfo.MemSizeDiff);
+			LOG_INF("ofset:0x%x,KWCmdBuf:0x%pK,KWTdrBuf:0x%pK\n",
+			offset, g_pKWCmdqBuffer, g_pKWTpipeBuffer);
+		} else {
+			LOG_INF("cmdqadd:0x%x,MVa:0x%llx,MPa:0x%x,MSzDiff:0x%x,KWCmdBuf:0x%pK,KWTdrBuf:0x%pK\n",
+			g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa,
+			g_CmdqBaseAddrInfo.MemSizeDiff, g_pKWCmdqBuffer, g_pKWTpipeBuffer);
+		}
+		g_bDumpPhyISPBuf = MTRUE;
+	}
+
+#else
+		if (g_bDumpPhyISPBuf == MFALSE) {
+			ctrl_start = ISP_RD32(ISP_DIP_A_BASE + 0x0000);
+			if (g_pPhyISPBuffer != NULL) {
+				for (i = 0; i < (ISP_DIP_PHYSICAL_REG_SIZE >> 2); i = i + 4) {
+					g_pPhyISPBuffer[i] = ISP_RD32(ISP_DIP_A_BASE + (i*4));
+					g_pPhyISPBuffer[i+1] = ISP_RD32(ISP_DIP_A_BASE + ((i+1)*4));
+				g_pPhyISPBuffer[i+2] = ISP_RD32(ISP_DIP_A_BASE + ((i+2)*4));
+				g_pPhyISPBuffer[i+3] = ISP_RD32(ISP_DIP_A_BASE + ((i+3)*4));
+			}
+		} else {
+			LOG_INF("g_pPhyISPBuffer:(0x%pK)\n", g_pPhyISPBuffer);
+		}
+		g_dumpInfo.tdri_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x204);/* 0x15022204 */
+		g_dumpInfo.imgi_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x400);/* 0x15022400 */
+		g_dumpInfo.dmgi_baseaddr = ISP_RD32(ISP_DIP_A_BASE + 0x520);/* 0x15022520 */
+		g_tdriaddr = g_dumpInfo.tdri_baseaddr;
+		for (cmdqidx = 0; cmdqidx < 32 ; cmdqidx++) {
+			if (ctrl_start & (0x1<<cmdqidx)) {
+				g_cmdqaddr = ISP_RD32(ISP_DIP_A_BASE + 0x108 + (cmdqidx*12));
+				break;
+			}
+		}
+		if ((g_TpipeBaseAddrInfo.MemPa != 0) && (g_TpipeBaseAddrInfo.MemVa != NULL)) {
+			/* to get frame tdri baseaddress, otherwide  you possible get one of the tdr bade addr*/
+			offset = ((g_tdriaddr & (~(g_TpipeBaseAddrInfo.MemSizeDiff-1)))-g_TpipeBaseAddrInfo.MemPa);
+			OffsetAddr = ((long long)g_TpipeBaseAddrInfo.MemVa)+offset;
+			if (copy_from_user(g_KWTpipeBuffer, (void __user *)(OffsetAddr),
+				MAX_ISP_TILE_TDR_HEX_NO) != 0) {
+				LOG_ERR("cpy tpipe fail.tdriaddr:0x%x,MVa:0x%llx,MPa:0x%x,ofset:0x%x\n",
+				g_tdriaddr, (long long)g_TpipeBaseAddrInfo.MemVa, g_TpipeBaseAddrInfo.MemPa, offset);
+			}
+			LOG_INF("tdriaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, MemSizeDiff:0x%x, offset:0x%x\n",
+			g_tdriaddr, (long long)g_TpipeBaseAddrInfo.MemVa, g_TpipeBaseAddrInfo.MemPa,
+			g_TpipeBaseAddrInfo.MemSizeDiff, offset);
+		}
+		if ((g_CmdqBaseAddrInfo.MemPa != 0) && (g_CmdqBaseAddrInfo.MemVa != NULL)) {
+			offset = (g_cmdqaddr-g_CmdqBaseAddrInfo.MemPa);
+			OffsetAddr = ((long long)g_CmdqBaseAddrInfo.MemVa)+(g_cmdqaddr-g_CmdqBaseAddrInfo.MemPa);
+			if (copy_from_user(g_KWCmdqBuffer, (void __user *)(OffsetAddr),
+				MAX_ISP_CMDQ_BUFFER_SIZE) != 0) {
+				LOG_ERR("cpy cmdq fail. cmdqaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, offset:0x%x\n",
+				g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa, offset);
+			}
+			LOG_INF("cmdqidx:0x%x, cmdqaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, offset:0x%x\n",
+			cmdqidx, g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa, offset);
+			offset = offset+g_CmdqBaseAddrInfo.MemSizeDiff;
+			OffsetAddr = ((long long)g_CmdqBaseAddrInfo.MemVa)+offset;
+			if (copy_from_user(g_KWVirISPBuffer, (void __user *)(OffsetAddr),
+				ISP_DIP_REG_SIZE) != 0) {
+				LOG_ERR("cpy vir isp fail.cmdqaddr:0x%x,MVa:0x%llx,MPa:0x%x,MSzDiff:0x%x,ofset:0x%x\n",
+				g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa,
+				g_CmdqBaseAddrInfo.MemSizeDiff, offset);
+			}
+			LOG_INF("cmdqaddr:0x%x, MemVa:0x%llx, MemPa:0x%x, MemSizeDiff:0x%x, offset:0x%x\n",
+			g_cmdqaddr, (long long)g_CmdqBaseAddrInfo.MemVa, g_CmdqBaseAddrInfo.MemPa,
+			g_CmdqBaseAddrInfo.MemSizeDiff, offset);
+		}
+		g_bDumpPhyISPBuf = MTRUE;
+	}
+#endif
+
+	LOG_INF("direct link:15020030(0x%x),g_bDumpPhyISPBuf:(0x%x),cmdqidx(0x%x),cmdqaddr(0x%x),tdriaddr(0x%x)\n",
+		ISP_RD32(ISP_IMGSYS_CONFIG_BASE + 0x0030), g_bDumpPhyISPBuf, cmdqidx, g_cmdqaddr, g_tdriaddr);
+	LOG_INF("isp: 15022000(0x%x)-15022004(0x%x)-15022008(0x%x)-1502200C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0000), ISP_RD32(ISP_DIP_A_BASE + 0x0004),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0008), ISP_RD32(ISP_DIP_A_BASE + 0x000C));
-	LOG_INF("isp: 15022010(0x%x)-15022014(0x%x)-15022018(0x%x)-1502201C(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0010), ISP_RD32(ISP_DIP_A_BASE + 0x0014), \
+	LOG_INF("isp: 15022010(0x%x)-15022014(0x%x)-15022018(0x%x)-1502201C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0010), ISP_RD32(ISP_DIP_A_BASE + 0x0014),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0018), ISP_RD32(ISP_DIP_A_BASE + 0x001C));
-	LOG_INF("isp: 15022D20(0x%x)-15022D24(0x%x)\n", \
+	LOG_INF("isp: 15022D20(0x%x)-15022D24(0x%x)\n",
 		ISP_RD32(ISP_DIP_A_BASE + 0x0D20), ISP_RD32(ISP_DIP_A_BASE + 0x0D24));
-	LOG_INF("isp: 15022408(0x%x)-15022204(0x%x)-15022208(0x%x)-1502220C(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0408), ISP_RD32(ISP_DIP_A_BASE + 0x0204), \
+	LOG_INF("isp: 15022408(0x%x)-15022204(0x%x)-15022208(0x%x)-1502220C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0408), ISP_RD32(ISP_DIP_A_BASE + 0x0204),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0208), ISP_RD32(ISP_DIP_A_BASE + 0x020C));
-	LOG_INF("isp: 15022050(0x%x)-15022054(0x%x)-15022058(0x%x)-1502205C(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0050), ISP_RD32(ISP_DIP_A_BASE + 0x0054), \
+	LOG_INF("isp: 15022050(0x%x)-15022054(0x%x)-15022058(0x%x)-1502205C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0050), ISP_RD32(ISP_DIP_A_BASE + 0x0054),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0058), ISP_RD32(ISP_DIP_A_BASE + 0x005C));
-	LOG_INF("isp: 150220B8(0x%x)-150220BC(0x%x)-150220C0(0x%x)-150220C4(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x00B8), ISP_RD32(ISP_DIP_A_BASE + 0x00BC), \
+	LOG_INF("isp: 150220B8(0x%x)-150220BC(0x%x)-150220C0(0x%x)-150220C4(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x00B8), ISP_RD32(ISP_DIP_A_BASE + 0x00BC),
 		ISP_RD32(ISP_DIP_A_BASE + 0x00C0), ISP_RD32(ISP_DIP_A_BASE + 0x00C4));
-	LOG_INF("isp: 150220C8(0x%x)-150220CC(0x%x)-150220D0(0x%x)-150220D4(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x00C8), ISP_RD32(ISP_DIP_A_BASE + 0x00CC), \
+	LOG_INF("isp: 150220C8(0x%x)-150220CC(0x%x)-150220D0(0x%x)-150220D4(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x00C8), ISP_RD32(ISP_DIP_A_BASE + 0x00CC),
 		ISP_RD32(ISP_DIP_A_BASE + 0x00D0), ISP_RD32(ISP_DIP_A_BASE + 0x00D4));
-	LOG_INF("isp: 15022104(0x%x)-15022108(0x%x)-1502211C(0x%x)-15022120(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0104), ISP_RD32(ISP_DIP_A_BASE + 0x0108), \
+	LOG_INF("isp: 15022104(0x%x)-15022108(0x%x)-1502211C(0x%x)-15022120(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0104), ISP_RD32(ISP_DIP_A_BASE + 0x0108),
 		ISP_RD32(ISP_DIP_A_BASE + 0x011C), ISP_RD32(ISP_DIP_A_BASE + 0x0120));
-	LOG_INF("isp: 15022128(0x%x)-1502212C(0x%x)-15022134(0x%x)-15022138(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0128), ISP_RD32(ISP_DIP_A_BASE + 0x012C), \
+	LOG_INF("isp: 15022128(0x%x)-1502212C(0x%x)-15022134(0x%x)-15022138(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0128), ISP_RD32(ISP_DIP_A_BASE + 0x012C),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0134), ISP_RD32(ISP_DIP_A_BASE + 0x0138));
-	LOG_INF("isp: 15022140(0x%x)-15022144(0x%x)-1502214C(0x%x)-15022150(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0140), ISP_RD32(ISP_DIP_A_BASE + 0x0144), \
+	LOG_INF("isp: 15022140(0x%x)-15022144(0x%x)-1502214C(0x%x)-15022150(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0140), ISP_RD32(ISP_DIP_A_BASE + 0x0144),
 		ISP_RD32(ISP_DIP_A_BASE + 0x014C), ISP_RD32(ISP_DIP_A_BASE + 0x0150));
-	LOG_INF("isp: 15022158(0x%x)-1502215C(0x%x)-15022164(0x%x)-15022168(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0158), ISP_RD32(ISP_DIP_A_BASE + 0x015C), \
+	LOG_INF("isp: 15022158(0x%x)-1502215C(0x%x)-15022164(0x%x)-15022168(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0158), ISP_RD32(ISP_DIP_A_BASE + 0x015C),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0164), ISP_RD32(ISP_DIP_A_BASE + 0x0168));
-	LOG_INF("isp: 15022170(0x%x)-15022174(0x%x)-1502217C(0x%x)-15022180(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0170), ISP_RD32(ISP_DIP_A_BASE + 0x0174), \
+	LOG_INF("isp: 15022170(0x%x)-15022174(0x%x)-1502217C(0x%x)-15022180(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0170), ISP_RD32(ISP_DIP_A_BASE + 0x0174),
 		ISP_RD32(ISP_DIP_A_BASE + 0x017C), ISP_RD32(ISP_DIP_A_BASE + 0x0180));
-	LOG_INF("isp: 15022188(0x%x)-1502218C(0x%x)-15022194(0x%x)-15022198(0x%x)\n", \
-		ISP_RD32(ISP_DIP_A_BASE + 0x0188), ISP_RD32(ISP_DIP_A_BASE + 0x018C), \
+	LOG_INF("isp: 15022188(0x%x)-1502218C(0x%x)-15022194(0x%x)-15022198(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0188), ISP_RD32(ISP_DIP_A_BASE + 0x018C),
 		ISP_RD32(ISP_DIP_A_BASE + 0x0194), ISP_RD32(ISP_DIP_A_BASE + 0x0198));
+	LOG_INF("isp: 15022060(0x%x)-15022064(0x%x)-15022068(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0060), ISP_RD32(ISP_DIP_A_BASE + 0x0064),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0068));
+		/* 0080, 0x15022080, DIP_A_CTL_DBG_SET */
+		ISP_WR32(ISP_DIP_A_BASE + 0x80, 0x0);
+		/* 06BC, 0x150226BC, DIP_A_DMA_DEBUG_SEL */
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x000013);
+		/* 0084, 0x15022084, DIP_A_CTL_DBG_PORT */
+		LOG_INF("0x000013 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x000113);
+		LOG_INF("0x000113 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x000213);
+		LOG_INF("0x000213 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x000313);
+		LOG_INF("0x000313 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		/* IMG2O */
+		/* 06BC, 0x150226BC, DIP_A_DMA_DEBUG_SEL */
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001013);
+		/* 0084, 0x15022084, DIP_A_CTL_DBG_PORT */
+		LOG_INF("0x001013 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001113);
+		LOG_INF("0x001113 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001213);
+		LOG_INF("0x001213 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001313);
+		LOG_INF("0x001313 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		/*IMG3O */
+		/* 06BC, 0x150226BC, DIP_A_DMA_DEBUG_SEL */
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001813);
+		/* 0084, 0x15022084, DIP_A_CTL_DBG_PORT */
+		LOG_INF("0x001813 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001913);
+		LOG_INF("0x001913 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001A13);
+		LOG_INF("0x001A13 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x6BC, 0x001B13);
+		LOG_INF("0x001B13 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x080, 0x003016);
+		LOG_INF("0x003016 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x080, 0x003017);
+		LOG_INF("0x003017 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x080, 0x003018);
+		LOG_INF("0x003018 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x080, 0x003019);
+		LOG_INF("0x003019 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		ISP_WR32(ISP_DIP_A_BASE + 0x080, 0x005100);
+		LOG_INF("0x005100 : isp: 0x15022084(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x084));
+		/* DMA Error */
+		LOG_INF("img2o  0x15022644(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x644));
+		LOG_INF("img2bo 0x15022648(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x648));
+		LOG_INF("img3o  0x1502264C(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x64C));
+		LOG_INF("img3bo 0x15022650(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x650));
+		LOG_INF("img3Co 0x15022654(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x654));
+		LOG_INF("feo    0x15022658(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x658));
+		LOG_INF("mfbo   0x1502265C(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x65C));
+		LOG_INF("imgi   0x15022660(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x660));
+		LOG_INF("imgbi  0x15022664(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x664));
+		LOG_INF("imgci  0x15022668(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x668));
+		LOG_INF("vipi   0x1502266c(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x66c));
+		LOG_INF("vip2i  0x15022670(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x670));
+		LOG_INF("vip3i  0x15022674(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x674));
+		LOG_INF("dmgi   0x15022678(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x678));
+		LOG_INF("depi   0x1502267c(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x67C));
+		LOG_INF("lcei   0x15022680(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x680));
+		LOG_INF("ufdi   0x15022684(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x684));
+		LOG_INF("CTL_INT_STATUSX      0x15022040(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x040));
+		LOG_INF("CTL_CQ_INT_STATUSX   0x15022044(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x044));
+		LOG_INF("CTL_CQ_INT2_STATUSX  0x15022048(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x048));
+		LOG_INF("CTL_CQ_INT3_STATUSX  0x1502204C(0x%x)", ISP_RD32(ISP_DIP_A_BASE + 0x04C));
+	LOG_INF("img3o: 0x15022290(0x%x)-0x15022298(0x%x)-0x150222A0(0x%x)-0x150222A4(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x290), ISP_RD32(ISP_DIP_A_BASE + 0x0298),
+		ISP_RD32(ISP_DIP_A_BASE + 0x2A0), ISP_RD32(ISP_DIP_A_BASE + 0x02A4));
+	LOG_INF("img3o: 0x150222A8(0x%x)-0x150222AC(0x%x)-0x150222B0(0x%x)-0x150222B4(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x02A8), ISP_RD32(ISP_DIP_A_BASE + 0x02AC),
+		ISP_RD32(ISP_DIP_A_BASE + 0x02B0), ISP_RD32(ISP_DIP_A_BASE + 0x02B4));
+	LOG_INF("img3o: 0x150222B8(0x%x)\n", ISP_RD32(ISP_DIP_A_BASE + 0x02B8));
+
+	LOG_INF("imgi: 0x15022400(0x%x)-0x15022408(0x%x)-0x15022410(0x%x)-0x15022414(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x400), ISP_RD32(ISP_DIP_A_BASE + 0x408),
+		ISP_RD32(ISP_DIP_A_BASE + 0x410), ISP_RD32(ISP_DIP_A_BASE + 0x414));
+	LOG_INF("imgi: 0x15022418(0x%x)-0x1502241C(0x%x)-0x15022420(0x%x)-0x15022424(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x418), ISP_RD32(ISP_DIP_A_BASE + 0x41C),
+		ISP_RD32(ISP_DIP_A_BASE + 0x420), ISP_RD32(ISP_DIP_A_BASE + 0x424));
+
+	LOG_INF("mfbo: 0x15022350(0x%x)-0x15022358(0x%x)-0x15022360(0x%x)-0x15022364(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x350), ISP_RD32(ISP_DIP_A_BASE + 0x358),
+		ISP_RD32(ISP_DIP_A_BASE + 0x360), ISP_RD32(ISP_DIP_A_BASE + 0x364));
+	LOG_INF("mfbo: 0x15022368(0x%x)-0x1502236C(0x%x)-0x15022370(0x%x)-0x15022374(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x368), ISP_RD32(ISP_DIP_A_BASE + 0x36C),
+		ISP_RD32(ISP_DIP_A_BASE + 0x370), ISP_RD32(ISP_DIP_A_BASE + 0x374));
+	LOG_INF("mfbo: 0x15022378(0x%x)\n", ISP_RD32(ISP_DIP_A_BASE + 0x378));
+
+	LOG_INF("img2o: 0x15022230(0x%x)-0x15022238(0x%x)-0x15022240(0x%x)-0x15022244(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x230), ISP_RD32(ISP_DIP_A_BASE + 0x238),
+		ISP_RD32(ISP_DIP_A_BASE + 0x240), ISP_RD32(ISP_DIP_A_BASE + 0x244));
+	LOG_INF("img2o: 0x15022248(0x%x)-0x1502224C(0x%x)-0x15022250(0x%x)-0x15022254(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0248), ISP_RD32(ISP_DIP_A_BASE + 0x024C),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0250), ISP_RD32(ISP_DIP_A_BASE + 0x0254));
+	LOG_INF("img2o: 0x15022258(0x%x)\n", ISP_RD32(ISP_DIP_A_BASE + 0x0258));
+
+	LOG_INF("lcei: 0x15022580(0x%x)-0x15022588(0x%x)-0x15022590(0x%x)-0x15022594(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x580), ISP_RD32(ISP_DIP_A_BASE + 0x588),
+		ISP_RD32(ISP_DIP_A_BASE + 0x590), ISP_RD32(ISP_DIP_A_BASE + 0x594));
+	LOG_INF("lcei: 0x15022598(0x%x)-0x1502259C(0x%x)-0x150225A0(0x%x)-0x150225A4(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0598), ISP_RD32(ISP_DIP_A_BASE + 0x059C),
+		ISP_RD32(ISP_DIP_A_BASE + 0x05A0), ISP_RD32(ISP_DIP_A_BASE + 0x05A4));
+
+	LOG_INF("crz: 0x15022C10(0x%x)-0x15022C14(0x%x)-0x15022C18(0x%x)-0x15022C1C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0xC10), ISP_RD32(ISP_DIP_A_BASE + 0xC14),
+		ISP_RD32(ISP_DIP_A_BASE + 0xC18), ISP_RD32(ISP_DIP_A_BASE + 0xC1C));
+	LOG_INF("crz: 0x15022C20(0x%x)-0x15022C24(0x%x)-0x15022C28(0x%x)-0x15022C2C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0C20), ISP_RD32(ISP_DIP_A_BASE + 0x0C24),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0C28), ISP_RD32(ISP_DIP_A_BASE + 0x0C2C));
+	LOG_INF("crz: 0x15022C30(0x%x)-0x15022C34(0x%x)-0x15022C38(0x%x)-0x15022C3C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0C30), ISP_RD32(ISP_DIP_A_BASE + 0x0C34),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0C38), ISP_RD32(ISP_DIP_A_BASE + 0x0C3C));
+	LOG_INF("crz: 0x15022C40(0x%x)-0x15022C44(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0C40), ISP_RD32(ISP_DIP_A_BASE + 0x0C44));
+
+	LOG_INF("mfb: 0x15022F60(0x%x)-0x15022F64(0x%x)-0x15022F68(0x%x)-0x15022F6C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0xF60), ISP_RD32(ISP_DIP_A_BASE + 0xF64),
+		ISP_RD32(ISP_DIP_A_BASE + 0xF68), ISP_RD32(ISP_DIP_A_BASE + 0xF6C));
+	LOG_INF("mfb: 0x15022F70(0x%x)-0x15022F74(0x%x)-0x15022F78(0x%x)-0x15022F7C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F70), ISP_RD32(ISP_DIP_A_BASE + 0x0F74),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F78), ISP_RD32(ISP_DIP_A_BASE + 0x0F7C));
+	LOG_INF("mfb: 0x15022F80(0x%x)-0x15022F84(0x%x)-0x15022F88(0x%x)-0x15022F8C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F80), ISP_RD32(ISP_DIP_A_BASE + 0x0F84),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F88), ISP_RD32(ISP_DIP_A_BASE + 0x0F8C));
+	LOG_INF("mfb: 0x15022F90(0x%x)-0x15022F94(0x%x)-0x15022F98(0x%x)-0x15022F9C(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F90), ISP_RD32(ISP_DIP_A_BASE + 0x0F94),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0F98), ISP_RD32(ISP_DIP_A_BASE + 0x0F9C));
+	LOG_INF("mfb: 0x15022FA0(0x%x)-0x15022FA4(0x%x)-0x15022FA8(0x%x)-0x15022FAC(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0FA0), ISP_RD32(ISP_DIP_A_BASE + 0x0FA4),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0FA8), ISP_RD32(ISP_DIP_A_BASE + 0x0FAC));
+	LOG_INF("mfb: 0x15022FB0(0x%x)-0x15022FB4(0x%x)-0x15022FB8(0x%x)\n",
+		ISP_RD32(ISP_DIP_A_BASE + 0x0FB0), ISP_RD32(ISP_DIP_A_BASE + 0x0FB4),
+		ISP_RD32(ISP_DIP_A_BASE + 0x0FB8));
+
 	LOG_DBG("- X.");
 	/*  */
 	return Ret;
@@ -4557,6 +4949,7 @@ static MINT32 ISP_WriteReg(ISP_REG_IO_STRUCT *pRegIo)
 	if (pData == NULL) {
 		LOG_DBG("ERROR: kmalloc failed, (process, pid, tgid)=(%s, %d, %d)\n", current->comm, current->pid, current->tgid);
 		Ret = -ENOMEM;
+		goto EXIT;
 	}
 	/*  */
 	if (copy_from_user(pData, (void __user *)(pRegIo->pData), pRegIo->Count * sizeof(ISP_REG_STRUCT)) != 0) {
@@ -4578,6 +4971,297 @@ EXIT:
 }
 
 
+
+/*******************************************************************************
+*
+********************************************************************************/
+#ifdef AEE_DUMP_BY_USING_ION_MEMORY
+static MINT32 isp_allocbuf(struct isp_imem_memory *pMemInfo)
+{
+	int ret = 0;
+	struct ion_mm_data mm_data;
+	struct ion_sys_data sys_data;
+	struct ion_handle *handle = NULL;
+
+	if (pMemInfo == NULL) {
+		LOG_ERR("pMemInfo is NULL!!\n");
+		ret = -ENOMEM;
+		goto isp_allocbuf_exit;
+	}
+
+	if (isp_p2_ion_client == NULL) {
+		LOG_ERR("isp_p2_ion_client is NULL!!\n");
+		ret = -ENOMEM;
+		goto isp_allocbuf_exit;
+	}
+
+	handle = ion_alloc(isp_p2_ion_client, pMemInfo->length, 0, ION_HEAP_MULTIMEDIA_MASK, 0);
+	if (handle == NULL) {
+		LOG_ERR("fail to alloc ion buffer, ret=%d\n", ret);
+		ret = -ENOMEM;
+		goto isp_allocbuf_exit;
+	}
+	pMemInfo->handle = (void *) handle;
+
+	pMemInfo->va = (uint64_t) ion_map_kernel(isp_p2_ion_client, handle);
+	if (pMemInfo->va == 0) {
+		LOG_ERR("fail to map va of buffer!\n");
+		ret = -ENOMEM;
+		goto isp_allocbuf_exit;
+	}
+
+	mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
+	mm_data.config_buffer_param.kernel_handle = handle;
+	mm_data.config_buffer_param.eModuleID = 0;
+	mm_data.config_buffer_param.security = 0;
+	mm_data.config_buffer_param.coherent = 1;
+	ret = ion_kernel_ioctl(isp_p2_ion_client, ION_CMD_MULTIMEDIA, (unsigned long)&mm_data);
+	if (ret) {
+		LOG_ERR("fail to config ion buffer, ret=%d\n", ret);
+		ret = -ENOMEM;
+		goto isp_allocbuf_exit;
+	}
+
+	sys_data.sys_cmd = ION_SYS_GET_PHYS;
+	sys_data.get_phys_param.kernel_handle = handle;
+	ret = ion_kernel_ioctl(isp_p2_ion_client, ION_CMD_SYSTEM, (unsigned long)&sys_data);
+	pMemInfo->pa = sys_data.get_phys_param.phy_addr;
+
+isp_allocbuf_exit:
+
+	if (ret < 0) {
+		if (handle)
+			ion_free(isp_p2_ion_client, handle);
+	}
+
+	return ret;
+}
+
+/*******************************************************************************
+*
+********************************************************************************/
+static void isp_freebuf(struct isp_imem_memory *pMemInfo)
+{
+	struct ion_handle *handle;
+
+	if (pMemInfo == NULL) {
+		LOG_ERR("pMemInfo is NULL!!\n");
+		return;
+	}
+
+	handle = (struct ion_handle *) pMemInfo->handle;
+	if (handle) {
+		ion_unmap_kernel(isp_p2_ion_client, handle);
+		ion_free(isp_p2_ion_client, handle);
+	}
+
+}
+#endif
+
+/*******************************************************************************
+*
+********************************************************************************/
+static MINT32 ISP_DumpBuffer(ISP_DUMP_BUFFER_STRUCT *pDumpBufStruct)
+{
+	MINT32 Ret = 0;
+
+	if (pDumpBufStruct->BytesofBufferSize > 0xFFFFFFFF) {
+		LOG_ERR("pDumpTuningBufStruct->BytesofBufferSize error");
+		Ret = -EFAULT;
+		goto EXIT;
+	}
+	/*  */
+	if ((void __user *)(pDumpBufStruct->pBuffer) == NULL) {
+		LOG_ERR("NULL pDumpBufStruct->pBuffer");
+		Ret = -EFAULT;
+		goto EXIT;
+	}
+	/* Native Exception */
+	switch (pDumpBufStruct->DumpCmd) {
+	case ISP_DUMP_TPIPEBUF_CMD:
+		if (pDumpBufStruct->BytesofBufferSize > MAX_ISP_TILE_TDR_HEX_NO) {
+			LOG_ERR("tpipe size error, size:0x%x", pDumpBufStruct->BytesofBufferSize);
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#ifdef AEE_DUMP_REDUCE_MEMORY
+		if (g_bIonBufferAllocated == MFALSE) {
+			if (g_pTpipeBuffer == NULL)
+				g_pTpipeBuffer = vmalloc(MAX_ISP_TILE_TDR_HEX_NO);
+			else
+				LOG_ERR("g_pTpipeBuffer:0x%pK is not NULL!!", g_pTpipeBuffer);
+		}
+		if (g_pTpipeBuffer != NULL) {
+			if (copy_from_user(g_pTpipeBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+				pDumpBufStruct->BytesofBufferSize) != 0) {
+				LOG_ERR("copy_from_user g_pTpipeBuffer failed\n");
+				Ret = -EFAULT;
+				goto EXIT;
+			}
+		} else {
+			LOG_ERR("g_pTpipeBuffer kmalloc failed, g_bIonBufAllocated:%d\n", g_bIonBufferAllocated);
+		}
+#else
+		if (copy_from_user(g_TpipeBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+			pDumpBufStruct->BytesofBufferSize) != 0) {
+			LOG_ERR("copy_from_user g_TpipeBuffer failed\n");
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#endif
+		LOG_INF("copy dumpbuf::0x%p tpipebuf:0x%p is done!!\n", pDumpBufStruct->pBuffer, g_pTpipeBuffer);
+		DumpBufferField = DumpBufferField | 0x1;
+		break;
+	case ISP_DUMP_TUNINGBUF_CMD:
+		if (pDumpBufStruct->BytesofBufferSize > ISP_DIP_REG_SIZE) {
+			LOG_ERR("tuning buf size error, size:0x%x", pDumpBufStruct->BytesofBufferSize);
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#ifdef AEE_DUMP_REDUCE_MEMORY
+		if (g_bIonBufferAllocated == MFALSE) {
+			if (g_pTuningBuffer == NULL)
+				g_pTuningBuffer = vmalloc(ISP_DIP_REG_SIZE);
+			else
+				LOG_ERR("g_TuningBuffer:0x%pK is not NULL!!", g_pTuningBuffer);
+		}
+		if (g_pTuningBuffer != NULL) {
+			if (copy_from_user(g_pTuningBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+				pDumpBufStruct->BytesofBufferSize) != 0) {
+				LOG_ERR("copy_from_user g_pTuningBuffer failed\n");
+				Ret = -EFAULT;
+				goto EXIT;
+			}
+		} else {
+			LOG_ERR("ERROR: g_TuningBuffer kmalloc failed\n");
+		}
+#else
+		if (copy_from_user(g_TuningBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+			pDumpBufStruct->BytesofBufferSize) != 0) {
+			LOG_ERR("copy_from_user g_TuningBuffer failed\n");
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#endif
+		LOG_INF("copy dumpbuf::0x%p tuningbuf:0x%p is done!!\n", pDumpBufStruct->pBuffer, g_pTuningBuffer);
+		DumpBufferField = DumpBufferField | 0x2;
+		break;
+	case ISP_DUMP_ISPVIRBUF_CMD:
+		if (pDumpBufStruct->BytesofBufferSize > ISP_DIP_REG_SIZE) {
+			LOG_ERR("vir isp buffer size error, size:0x%x", pDumpBufStruct->BytesofBufferSize);
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#ifdef AEE_DUMP_REDUCE_MEMORY
+		if (g_bIonBufferAllocated == MFALSE) {
+			if (g_pVirISPBuffer == NULL)
+				g_pVirISPBuffer = vmalloc(ISP_DIP_REG_SIZE);
+			else
+				LOG_ERR("g_pVirISPBuffer:0x%pK is not NULL!!", g_pVirISPBuffer);
+		}
+		if (g_pVirISPBuffer != NULL) {
+			if (copy_from_user(g_pVirISPBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+				pDumpBufStruct->BytesofBufferSize) != 0) {
+				LOG_ERR("copy_from_user g_pVirISPBuffer failed\n");
+				Ret = -EFAULT;
+				goto EXIT;
+			}
+		} else {
+			LOG_ERR("ERROR: g_pVirISPBuffer kmalloc failed\n");
+		}
+#else
+		if (copy_from_user(g_VirISPBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+			pDumpBufStruct->BytesofBufferSize) != 0) {
+			LOG_ERR("copy_from_user g_VirISPBuffer failed\n");
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#endif
+		LOG_INF("copy dumpbuf::0x%p virispbuf:0x%p is done!!\n", pDumpBufStruct->pBuffer, g_pVirISPBuffer);
+		DumpBufferField = DumpBufferField | 0x4;
+		break;
+	case ISP_DUMP_CMDQVIRBUF_CMD:
+		if (pDumpBufStruct->BytesofBufferSize > MAX_ISP_CMDQ_BUFFER_SIZE) {
+			LOG_ERR("cmdq buffer size error, size:0x%x", pDumpBufStruct->BytesofBufferSize);
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#ifdef AEE_DUMP_REDUCE_MEMORY
+		if (g_bIonBufferAllocated == MFALSE) {
+			if (g_pCmdqBuffer == NULL)
+				g_pCmdqBuffer = vmalloc(MAX_ISP_CMDQ_BUFFER_SIZE);
+			else
+				LOG_ERR("g_pCmdqBuffer:0x%pK is not NULL!!", g_pCmdqBuffer);
+		}
+		if (g_pCmdqBuffer != NULL) {
+			if (copy_from_user(g_pCmdqBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+				pDumpBufStruct->BytesofBufferSize) != 0) {
+				LOG_ERR("copy_from_user g_pCmdqBuffer failed\n");
+				Ret = -EFAULT;
+				goto EXIT;
+			}
+		} else {
+			LOG_ERR("ERROR: g_pCmdqBuffer kmalloc failed\n");
+		}
+#else
+		if (copy_from_user(g_CmdqBuffer, (void __user *)(pDumpBufStruct->pBuffer),
+			pDumpBufStruct->BytesofBufferSize) != 0) {
+			LOG_ERR("copy_from_user g_CmdqBuffer failed\n");
+			Ret = -EFAULT;
+			goto EXIT;
+		}
+#endif
+		LOG_INF("copy dumpbuf::0x%p cmdqbuf:0x%p is done!!\n", pDumpBufStruct->pBuffer, g_pCmdqBuffer);
+		DumpBufferField = DumpBufferField | 0x8;
+		break;
+	default:
+		LOG_ERR("error dump buffer cmd:%d", pDumpBufStruct->DumpCmd);
+		break;
+	}
+	if (g_bUserBufIsReady == MFALSE) {
+		if ((DumpBufferField & 0xf) == 0xf) {
+			g_bUserBufIsReady = MTRUE;
+			DumpBufferField = 0;
+			LOG_INF("DumpBufferField:0x%x, g_bUserBufIsReady:%d!!\n", DumpBufferField, g_bUserBufIsReady);
+		}
+	}
+	/*  */
+EXIT:
+
+	return Ret;
+}
+
+
+/*******************************************************************************
+*
+********************************************************************************/
+static MINT32 ISP_SetMemInfo(ISP_MEM_INFO_STRUCT *pMemInfoStruct)
+{
+	MINT32 Ret = 0;
+	/*  */
+	if ((void __user *)(pMemInfoStruct->MemVa) == NULL) {
+		LOG_ERR("NULL pMemInfoStruct->MemVa");
+		Ret = -EFAULT;
+		goto EXIT;
+	}
+	switch (pMemInfoStruct->MemInfoCmd) {
+	case ISP_MEMORY_INFO_TPIPE_CMD:
+		memcpy(&g_TpipeBaseAddrInfo, pMemInfoStruct, sizeof(ISP_MEM_INFO_STRUCT));
+		LOG_INF("set tpipe memory info is done!!\n");
+		break;
+	case ISP_MEMORY_INFO_CMDQ_CMD:
+		memcpy(&g_CmdqBaseAddrInfo, pMemInfoStruct, sizeof(ISP_MEM_INFO_STRUCT));
+		LOG_INF("set comq memory info is done!!\n");
+		break;
+	default:
+		LOG_ERR("error set memory info cmd:%d", pMemInfoStruct->MemInfoCmd);
+		break;
+	}
+	/*  */
+EXIT:
+
+	return Ret;
+}
 
 
 /*******************************************************************************
@@ -4807,6 +5491,10 @@ static long ISP_Buf_CTRL_FUNC(unsigned long Param)
 				memset((void *)g_DmaErr_CAM[rt_buf_ctrl.module], 0, sizeof(MUINT32)*nDMA_ERR_CAM);
 				break;
 			default:
+				if (rt_buf_ctrl.module >= ISP_IRQ_TYPE_AMOUNT) {
+					LOG_ERR("rt_buf_ctrl wrong module: %d", rt_buf_ctrl.module);
+					break;
+				}
 				sof_count[rt_buf_ctrl.module] = 0;
 				g1stSof[rt_buf_ctrl.module] = MTRUE;
 				g_ISPIntErr[rt_buf_ctrl.module] = 0;
@@ -4824,8 +5512,7 @@ static long ISP_Buf_CTRL_FUNC(unsigned long Param)
 			break;
 		case ISP_RT_BUF_CTRL_DMA_EN: {
 			MUINT8 array[_cam_max_];
-			/* if(copy_from_user(array, (void __user*)rt_buf_ctrl.data_ptr, sizeof(UINT8)*_cam_max_) == 0) { */
-			if (copy_from_user(array, (void __user *)rt_buf_ctrl.pExtend, sizeof(UINT8)*_cam_max_) == 0) {
+			if (copy_from_user(array, (void __user *)rt_buf_ctrl.pExtend, sizeof(MUINT8)*_cam_max_) == 0) {
 				MUINT32 z;
 				for (z = 0; z < _cam_max_; z++) {
 					pstRTBuf[rt_buf_ctrl.module]->ring_buf[z].active = array[z];
@@ -5350,6 +6037,14 @@ static MINT32 ISP_P2_BufQue_CTRL_FUNC(ISP_P2_BUFQUE_STRUCT param)
 		/* -> we should use param to find the current buffer index in Rlikst to update the buffer status cuz deque success/fail may not be the first buffer in Rlist */
 		/* ////////////////////////////////////////////////////////////////////// */
 		idx2 = ISP_P2_BufQue_GetMatchIdx(param, ISP_P2_BUFQUE_MATCH_TYPE_FRAMEOP, ISP_P2_BUFQUE_LIST_TAG_UNIT);
+		if (idx2 ==  -1) {
+			spin_unlock(&(SpinLock_P2FrameList));
+			LOG_ERR("ERR findmatch index 2 fail (%d_0x%x_0x%x_%d, %d_%d)",
+				 param.property, param.processID, param.callerID,
+				 param.frameNum, param.cQIdx, param.dupCQIdx);
+			ret =  -EFAULT;
+			return ret;
+		}
 		if (param.ctrl == ISP_P2_BUFQUE_CTRL_DEQUE_SUCCESS) {
 			P2_FrameUnit_List[property][idx2].bufSts = ISP_P2_BUF_STATE_DEQUE_SUCCESS;
 		} else {
@@ -5359,7 +6054,9 @@ static MINT32 ISP_P2_BufQue_CTRL_FUNC(ISP_P2_BUFQUE_STRUCT param)
 		idx = ISP_P2_BufQue_GetMatchIdx(param, ISP_P2_BUFQUE_MATCH_TYPE_FRAMEOP, ISP_P2_BUFQUE_LIST_TAG_PACKAGE);
 		if (idx ==  -1) {
 			spin_unlock(&(SpinLock_P2FrameList));
-			LOG_ERR("ERRRRRRRRRRR findmatch index 1 fail (%d_0x%x_0x%x_%d, %d_%d)", param.property, param.processID, param.callerID, param.frameNum, param.cQIdx, param.dupCQIdx);
+			LOG_ERR("ERR findmatch index 1 fail (%d_0x%x_0x%x_%d, %d_%d)",
+				 param.property, param.processID, param.callerID,
+				 param.frameNum, param.cQIdx, param.dupCQIdx);
 			ret =  -EFAULT;
 			return ret;
 		}
@@ -5367,12 +6064,6 @@ static MINT32 ISP_P2_BufQue_CTRL_FUNC(ISP_P2_BUFQUE_STRUCT param)
 		/* [3]update global pointer */
 		ISP_P2_BufQue_Update_ListCIdx(property, ISP_P2_BUFQUE_LIST_TAG_UNIT);
 		/* [4]erase node in ring buffer list */
-		if (idx2 ==  -1) {
-			spin_unlock(&(SpinLock_P2FrameList));
-			LOG_ERR("ERRRRRRRRRRR findmatch index 2 fail (%d_0x%x_0x%x_%d, %d_%d)", param.property, param.processID, param.callerID, param.frameNum, param.cQIdx, param.dupCQIdx);
-			ret =  -EFAULT;
-			return ret;
-		}
 		ISP_P2_BufQue_Erase(property, ISP_P2_BUFQUE_LIST_TAG_UNIT, idx2);
 		spin_unlock(&(SpinLock_P2FrameList));
 		/* [5]wake up thread user that wait for a specific buffer and the thread that wait for deque */
@@ -5502,7 +6193,8 @@ static MINT32 ISP_REGISTER_IRQ_USERKEY(char *userName)
 		} else {
 			/* IrqUserKey_UserInfo[i].userName=userName; */
 			memset((void *)IrqUserKey_UserInfo[i].userName, 0, sizeof(IrqUserKey_UserInfo[i].userName));
-			strcpy((void *)IrqUserKey_UserInfo[i].userName, userName);
+			strncpy((void *)IrqUserKey_UserInfo[i].userName, userName,
+				sizeof(IrqUserKey_UserInfo[i].userName) - 1);
 			IrqUserKey_UserInfo[i].userKey = FirstUnusedIrqUserKey;
 			key = FirstUnusedIrqUserKey;
 			FirstUnusedIrqUserKey++;
@@ -5529,7 +6221,8 @@ static MINT32 ISP_MARK_IRQ(ISP_WAIT_IRQ_STRUCT *irqinfo)
 	if (irqinfo->EventInfo.St_type == SIGNAL_INT) {
 		/* 1. enable marked flag */
 		spin_lock_irqsave(&(IspInfo.SpinLockIrq[irqinfo->Type]), flags);
-		IspInfo.IrqInfo.MarkedFlag[irqinfo->Type][irqinfo->EventInfo.UserKey][irqinfo->EventInfo.St_type] |= irqinfo->EventInfo.Status;
+		IspInfo.IrqInfo.MarkedFlag[irqinfo->Type][irqinfo->EventInfo.St_type][irqinfo->EventInfo.UserKey] |=
+			irqinfo->EventInfo.Status;
 		spin_unlock_irqrestore(&(IspInfo.SpinLockIrq[irqinfo->Type]), flags);
 
 		/* 2. record mark time */
@@ -5646,11 +6339,12 @@ static MINT32 ISP_FLUSH_IRQ(ISP_WAIT_IRQ_STRUCT *irqinfo)
 
 	/* 1. enable signal */
 	spin_lock_irqsave(&(IspInfo.SpinLockIrq[irqinfo->Type]), flags);
-	IspInfo.IrqInfo.Status[irqinfo->Type][irqinfo->EventInfo.St_type][irqinfo->EventInfo.UserKey] |= irqinfo->EventInfo.Status;
+	IspInfo.IrqInfo.Status[irqinfo->Type][irqinfo->EventInfo.St_type][irqinfo->EventInfo.UserKey] |=
+		irqinfo->EventInfo.Status;
 	spin_unlock_irqrestore(&(IspInfo.SpinLockIrq[irqinfo->Type]), flags);
 
 	/* 2. force to wake up the user that are waiting for that signal */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[irqinfo->Type]);
 
 	return 0;
 }
@@ -5793,7 +6487,7 @@ static MINT32 ISP_WaitIrq(ISP_WAIT_IRQ_STRUCT *WaitIrq)
 
 	/* 2. start to wait signal */
 	Timeout = wait_event_interruptible_timeout(
-			  IspInfo.WaitQueueHead,
+			  IspInfo.WaitQueueHead[WaitIrq->Type],
 			  ISP_GetIRQState(WaitIrq->Type, WaitIrq->EventInfo.St_type, WaitIrq->EventInfo.UserKey, WaitIrq->EventInfo.Status),
 			  ISP_MsToJiffies(WaitIrq->EventInfo.Timeout));
 	/* check if user is interrupted by system signal */
@@ -6454,6 +7148,8 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 	MUINT32 DebugFlag[3] = {0};
 	/*    MUINT32 pid = 0;*/
 	ISP_REG_IO_STRUCT       RegIo;
+	ISP_DUMP_BUFFER_STRUCT DumpBufStruct;
+	ISP_MEM_INFO_STRUCT MemInfoStruct;
 	ISP_WAIT_IRQ_STRUCT     IrqInfo;
 	ISP_CLEAR_IRQ_STRUCT    ClearIrq;
 	ISP_USER_INFO_STRUCT *pUserInfo;
@@ -6692,7 +7388,10 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 				goto EXIT;
 			}
 
-			LOG_DBG("ISP_CLEAR_IRQ:Type(%d),Status(0x%x),st_status(%d),IrqStatus(0x%p)\n", ClearIrq.Type, ClearIrq.EventInfo.Status, ClearIrq.EventInfo.St_type, IspInfo.IrqInfo.Status[ClearIrq.Type][ClearIrq.EventInfo.UserKey]);
+			LOG_DBG("ISP_CLEAR_IRQ:Type(%d),Status(0x%x),st_status(%d),IrqStatus(0x%x)\n",
+				ClearIrq.Type, ClearIrq.EventInfo.Status, ClearIrq.EventInfo.St_type,
+				IspInfo.IrqInfo.Status[ClearIrq.Type][ClearIrq.EventInfo.St_type]
+				[ClearIrq.EventInfo.UserKey]);
 			spin_lock_irqsave(&(IspInfo.SpinLockIrq[ClearIrq.Type]), flags);
 			IspInfo.IrqInfo.Status[ClearIrq.Type][ClearIrq.EventInfo.St_type][ClearIrq.EventInfo.UserKey] &= (~ClearIrq.EventInfo.Status);
 			spin_unlock_irqrestore(&(IspInfo.SpinLockIrq[ClearIrq.Type]), flags);
@@ -6705,6 +7404,7 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 	/*  */
 	case ISP_REGISTER_IRQ_USER_KEY:
 		if (copy_from_user(&RegUserKey, (void *)Param, sizeof(ISP_REGISTER_USERKEY_STRUCT)) == 0) {
+			RegUserKey.userName[31] = 0;
 			userKey = ISP_REGISTER_IRQ_USERKEY(RegUserKey.userName);
 			RegUserKey.userKey = userKey;
 			if (copy_to_user((void *)Param, &RegUserKey, sizeof(ISP_REGISTER_USERKEY_STRUCT)) != 0) {
@@ -6871,6 +7571,12 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 		if (copy_from_user(DebugFlag, (void *)Param, sizeof(MUINT32)) == 0) {
 			MUINT32 currentPPB = m_CurrentPPB;
 			MUINT32 lock_key = ISP_IRQ_TYPE_AMOUNT;
+
+			if (DebugFlag[0] >= ISP_IRQ_TYPE_AMOUNT) {
+				LOG_ERR("unsupported module:0x%x\n", DebugFlag[0]);
+				Ret = -EFAULT;
+				break;
+			}
 			if (DebugFlag[0] == ISP_IRQ_TYPE_INT_CAM_B_ST) {
 				lock_key = ISP_IRQ_TYPE_INT_CAM_A_ST;
 			} else {
@@ -7291,7 +7997,7 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 		break;
 	case ISP_ION_FREE_BY_HWMODULE:
 		if (copy_from_user(&module, (void *)Param, sizeof(MUINT32)) == 0) {
-			if (module < 0 || module > CAM_MAX) {
+			if (module < 0 || module >= CAM_MAX) {
 				LOG_ERR("module error(%d)\n", module);
 				Ret = -EFAULT;
 				break;
@@ -7332,6 +8038,33 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 			}
 		}
 		break;
+	case ISP_GET_DUMP_INFO: {
+		if (copy_to_user((void *)Param, &g_dumpInfo, sizeof(ISP_GET_DUMP_INFO_STRUCT)) != 0) {
+			LOG_ERR("ISP_GET_DUMP_INFO copy to user fail");
+			Ret = -EFAULT;
+		}
+		break;
+	}
+	case ISP_DUMP_BUFFER: {
+		if (copy_from_user(&DumpBufStruct, (void *)Param, sizeof(ISP_DUMP_BUFFER_STRUCT)) == 0) {
+			/* 2nd layer behavoir of copy from user is implemented in ISP_DumpTuningBuffer(...) */
+			Ret = ISP_DumpBuffer(&DumpBufStruct);
+		} else {
+			LOG_ERR("ISP_DUMP_TUNING_BUFFER copy_from_user failed\n");
+			Ret = -EFAULT;
+		}
+		break;
+	}
+	case ISP_SET_MEM_INFO: {
+		if (copy_from_user(&MemInfoStruct, (void *)Param, sizeof(ISP_MEM_INFO_STRUCT)) == 0) {
+			/* 2nd layer behavoir of copy from user is implemented in ISP_SetMemInfo(...) */
+			Ret = ISP_SetMemInfo(&MemInfoStruct);
+		} else {
+			LOG_ERR("ISP_SET_MEM_INFO copy_from_user failed\n");
+			Ret = -EFAULT;
+		}
+		break;
+	}
 	default:
 	{
 		LOG_ERR("Unknown Cmd(%d)\n", Cmd);
@@ -7473,6 +8206,44 @@ static int compat_put_isp_ref_cnt_ctrl_struct_data(
 	return err;
 }
 
+static int compat_get_isp_dump_buffer(
+	compat_ISP_DUMP_BUFFER_STRUCT __user *data32,
+	ISP_DUMP_BUFFER_STRUCT __user *data)
+{
+	compat_uint_t count;
+	compat_uint_t cmd;
+	compat_uptr_t uptr;
+	int err = 0;
+
+	err = get_user(cmd, &data32->DumpCmd);
+	err |= put_user(cmd, &data->DumpCmd);
+	err |= get_user(uptr, &data32->pBuffer);
+	err |= put_user(compat_ptr(uptr), &data->pBuffer);
+	err |= get_user(count, &data32->BytesofBufferSize);
+	err |= put_user(count, &data->BytesofBufferSize);
+	return err;
+}
+
+static int compat_get_isp_mem_info(
+	compat_ISP_MEM_INFO_STRUCT __user *data32,
+	ISP_MEM_INFO_STRUCT __user *data)
+{
+	compat_uint_t cmd;
+	compat_uint_t mempa;
+	compat_uptr_t uptr;
+	compat_uint_t size;
+	int err = 0;
+
+	err = get_user(cmd, &data32->MemInfoCmd);
+	err |= put_user(cmd, &data->MemInfoCmd);
+	err |= get_user(mempa, &data32->MemPa);
+	err |= put_user(mempa, &data->MemPa);
+	err |= get_user(uptr, &data32->MemVa);
+	err |= put_user(compat_ptr(uptr), &data->MemVa);
+	err |= get_user(size, &data32->MemSizeDiff);
+	err |= put_user(size, &data->MemSizeDiff);
+	return err;
+}
 
 #if 0
 static int compat_get_isp_register_userkey_struct_data(
@@ -7706,6 +8477,44 @@ static long ISP_ioctl_compat(struct file *filp, unsigned int cmd, unsigned long 
 						   (unsigned long)compat_ptr(arg));
 		return ret;
 	}
+	case COMPAT_ISP_DUMP_BUFFER: {
+		compat_ISP_DUMP_BUFFER_STRUCT __user *data32;
+		ISP_DUMP_BUFFER_STRUCT __user *data;
+
+		int err = 0;
+
+		data32 = compat_ptr(arg);
+		data = compat_alloc_user_space(sizeof(*data));
+		if (data == NULL)
+			return -EFAULT;
+
+		err = compat_get_isp_dump_buffer(data32, data);
+		if (err) {
+			LOG_INF("COMPAT_ISP_DUMP_BUFFER error!!!\n");
+			return err;
+		}
+		ret = filp->f_op->unlocked_ioctl(filp, ISP_DUMP_BUFFER, (unsigned long)data);
+		return ret;
+	}
+	case COMPAT_ISP_SET_MEM_INFO: {
+		compat_ISP_MEM_INFO_STRUCT __user *data32;
+		ISP_MEM_INFO_STRUCT __user *data;
+
+		int err = 0;
+
+		data32 = compat_ptr(arg);
+		data = compat_alloc_user_space(sizeof(*data));
+		if (data == NULL)
+			return -EFAULT;
+		err = compat_get_isp_mem_info(data32, data);
+		if (err) {
+			LOG_INF("COMPAT_ISP_SET_MEM_INFO error!!!\n");
+			return err;
+		}
+		ret = filp->f_op->unlocked_ioctl(filp, ISP_SET_MEM_INFO, (unsigned long)data);
+		return ret;
+	}
+	case ISP_GET_DUMP_INFO:
 	case ISP_RESET_CAM_P1:
 	case ISP_WAIT_IRQ:
 	case ISP_CLEAR_IRQ: /* structure (no pointer) */
@@ -7790,6 +8599,7 @@ static MINT32 ISP_open(
 		IrqUserKey_UserInfo[i].userKey = -1;
 	}
 	/*  */
+	spin_lock(&(SpinLock_P2FrameList));
 	for (q = 0; q < ISP_P2_BUFQUE_PROPERTY_NUM; q++) {
 		for (i = 0; i < _MAX_SUPPORT_P2_FRAME_NUM_; i++) {
 			P2_FrameUnit_List[q][i].processID = 0x0;
@@ -7812,9 +8622,12 @@ static MINT32 ISP_open(
 		P2_FramePack_List_Idx[q].curr = 0;
 		P2_FramePack_List_Idx[q].end =  -1;
 	}
+	spin_unlock(&(SpinLock_P2FrameList));
 
 	/*  */
+	spin_lock((spinlock_t *)(&SpinLockRegScen));
 	g_regScen = 0xa5a5a5a5;
+	spin_unlock((spinlock_t *)(&SpinLockRegScen));
 	/*  */
 	IspInfo.BufInfo.Read.pData = (MUINT8 *) kmalloc(ISP_BUF_SIZE, GFP_ATOMIC);
 	IspInfo.BufInfo.Read.Size = ISP_BUF_SIZE;
@@ -7825,6 +8638,63 @@ static MINT32 ISP_open(
 		goto EXIT;
 	}
 
+	mutex_lock(&gIspMutex);
+	g_bIonBufferAllocated = MFALSE;
+#ifdef AEE_DUMP_BY_USING_ION_MEMORY
+	g_isp_p2_imem_buf.handle = NULL;
+	g_isp_p2_imem_buf.ion_fd = 0;
+	g_isp_p2_imem_buf.va = 0;
+	g_isp_p2_imem_buf.pa = 0;
+	g_isp_p2_imem_buf.length = ((4*ISP_DIP_REG_SIZE) + (2*MAX_ISP_TILE_TDR_HEX_NO)
+	 + (2*MAX_ISP_CMDQ_BUFFER_SIZE) + (8*0x400));
+	isp_p2_ion_client = NULL;
+	if ((isp_p2_ion_client == NULL) && (g_ion_device))
+		isp_p2_ion_client = ion_client_create(g_ion_device, "isp_p2");
+	if (isp_p2_ion_client == NULL)
+		LOG_ERR("invalid isp_p2_ion_client client!\n");
+	if (isp_allocbuf(&g_isp_p2_imem_buf) >= 0)
+		g_bIonBufferAllocated = MTRUE;
+#endif
+
+	if (g_bIonBufferAllocated == MTRUE) {
+		g_pPhyISPBuffer = (unsigned int *)(g_isp_p2_imem_buf.va);
+		g_pTuningBuffer = (unsigned int *)(((uint64_t)g_pPhyISPBuffer) + ISP_DIP_REG_SIZE);
+		g_pTpipeBuffer = (unsigned int *)(((uint64_t)g_pTuningBuffer) + ISP_DIP_REG_SIZE);
+		g_pVirISPBuffer = (unsigned int *)(((uint64_t)g_pTpipeBuffer) + MAX_ISP_TILE_TDR_HEX_NO);
+		g_pCmdqBuffer = (unsigned int *)(((uint64_t)g_pVirISPBuffer) + ISP_DIP_REG_SIZE);
+		/* Kernel Exception */
+		g_pKWTpipeBuffer = (unsigned int *)(((uint64_t)g_pCmdqBuffer) + MAX_ISP_CMDQ_BUFFER_SIZE);
+		g_pKWCmdqBuffer = (unsigned int *)(((uint64_t)g_pKWTpipeBuffer) + MAX_ISP_TILE_TDR_HEX_NO);
+		g_pKWVirISPBuffer = (unsigned int *)(((uint64_t)g_pKWCmdqBuffer) + MAX_ISP_CMDQ_BUFFER_SIZE);
+	} else {
+		/* Navtive Exception */
+		g_pPhyISPBuffer = NULL;
+		g_pTuningBuffer = NULL;
+		g_pTpipeBuffer = NULL;
+		g_pVirISPBuffer = NULL;
+		g_pCmdqBuffer = NULL;
+		/* Kernel Exception */
+		g_pKWTpipeBuffer = NULL;
+		g_pKWCmdqBuffer = NULL;
+		g_pKWVirISPBuffer = NULL;
+	}
+	mutex_unlock(&gIspMutex);
+	g_bUserBufIsReady = MFALSE;
+	g_bDumpPhyISPBuf = MFALSE;
+	g_dumpInfo.tdri_baseaddr = 0xFFFFFFFF;/* 0x15022204 */
+	g_dumpInfo.imgi_baseaddr = 0xFFFFFFFF;/* 0x15022400 */
+	g_dumpInfo.dmgi_baseaddr = 0xFFFFFFFF;/* 0x15022520 */
+	g_tdriaddr = 0xffffffff;
+	g_cmdqaddr = 0xffffffff;
+	DumpBufferField = 0;
+	g_TpipeBaseAddrInfo.MemInfoCmd = 0x0;
+	g_TpipeBaseAddrInfo.MemPa = 0x0;
+	g_TpipeBaseAddrInfo.MemVa = NULL;
+	g_TpipeBaseAddrInfo.MemSizeDiff = 0x0;
+	g_CmdqBaseAddrInfo.MemInfoCmd = 0x0;
+	g_CmdqBaseAddrInfo.MemPa = 0x0;
+	g_CmdqBaseAddrInfo.MemVa = NULL;
+	g_CmdqBaseAddrInfo.MemSizeDiff = 0x0;
 
 	/*  */
 	for (i = 0; i < ISP_REF_CNT_ID_MAX; i++) {
@@ -7899,6 +8769,7 @@ static inline void ISP_StopHW(MINT32 module)
 	loopCnt = 3;
 	waitirq.Type = (module == ISP_CAM_A_IDX) ?
 		ISP_IRQ_TYPE_INT_CAM_A_ST : ISP_IRQ_TYPE_INT_CAM_B_ST;
+	waitirq.bDumpReg = 0;
 	waitirq.EventInfo.Clear = ISP_IRQ_CLEAR_WAIT;
 	waitirq.EventInfo.Status = VS_INT_ST;
 	waitirq.EventInfo.St_type = SIGNAL_INT;
@@ -8058,6 +8929,75 @@ static MINT32 ISP_release(
 		IspInfo.BufInfo.Read.Size = 0;
 		IspInfo.BufInfo.Read.Status = ISP_BUF_STATUS_EMPTY;
 	}
+
+	/* Protect the Multi Process */
+	mutex_lock(&gIspMutex);
+	if (g_bIonBufferAllocated == MFALSE) {
+		/* Native Exception */
+		if (g_pPhyISPBuffer != NULL) {
+			vfree(g_pPhyISPBuffer);
+			g_pPhyISPBuffer = NULL;
+		}
+		if (g_pTuningBuffer != NULL) {
+			vfree(g_pTuningBuffer);
+			g_pTuningBuffer = NULL;
+		}
+		if (g_pTpipeBuffer != NULL) {
+			vfree(g_pTpipeBuffer);
+			g_pTpipeBuffer = NULL;
+		}
+		if (g_pVirISPBuffer != NULL) {
+			vfree(g_pVirISPBuffer);
+			g_pVirISPBuffer = NULL;
+		}
+		if (g_pCmdqBuffer != NULL) {
+			vfree(g_pCmdqBuffer);
+			g_pCmdqBuffer = NULL;
+		}
+		/* Kernel Exception */
+		if (g_pKWTpipeBuffer != NULL) {
+			vfree(g_pKWTpipeBuffer);
+			g_pKWTpipeBuffer = NULL;
+		}
+		if (g_pKWCmdqBuffer != NULL) {
+			vfree(g_pKWCmdqBuffer);
+			g_pKWCmdqBuffer = NULL;
+		}
+		if (g_pKWVirISPBuffer != NULL) {
+			vfree(g_pKWVirISPBuffer);
+			g_pKWVirISPBuffer = NULL;
+		}
+	} else {
+#ifdef AEE_DUMP_BY_USING_ION_MEMORY
+		isp_freebuf(&g_isp_p2_imem_buf);
+		g_isp_p2_imem_buf.handle = NULL;
+		g_isp_p2_imem_buf.ion_fd = 0;
+		g_isp_p2_imem_buf.va = 0;
+		g_isp_p2_imem_buf.pa = 0;
+		g_bIonBufferAllocated = MFALSE;
+		/* Navtive Exception */
+		g_pPhyISPBuffer = NULL;
+		g_pTuningBuffer = NULL;
+		g_pTpipeBuffer = NULL;
+		g_pVirISPBuffer = NULL;
+		g_pCmdqBuffer = NULL;
+		/* Kernel Exception */
+		g_pKWTpipeBuffer = NULL;
+		g_pKWCmdqBuffer = NULL;
+		g_pKWVirISPBuffer = NULL;
+#endif
+	}
+	mutex_unlock(&gIspMutex);
+
+#ifdef AEE_DUMP_BY_USING_ION_MEMORY
+	if (isp_p2_ion_client != NULL) {
+		ion_client_destroy(isp_p2_ion_client);
+		isp_p2_ion_client = NULL;
+	} else {
+		LOG_ERR("isp_p2_ion_client is NULL!!\n");
+	}
+#endif
+
 	/* reset backup regs*/
 	memset(g_BkReg, 0, sizeof(_isp_bk_reg_t) * ISP_IRQ_TYPE_AMOUNT);
 
@@ -8460,7 +9400,8 @@ static MINT32 ISP_probe(struct platform_device *pDev)
 #endif
 #endif
 		/*  */
-		init_waitqueue_head(&IspInfo.WaitQueueHead);
+		for (i = 0 ; i < ISP_IRQ_TYPE_AMOUNT; i++)
+			init_waitqueue_head(&IspInfo.WaitQueueHead[i]);
 
 #ifdef CONFIG_PM_WAKELOCKS
 		wakeup_source_init(&isp_wake_lock, "isp_lock_wakelock");
@@ -8487,7 +9428,9 @@ static MINT32 ISP_probe(struct platform_device *pDev)
 
 
 		/* Init IspInfo*/
+		spin_lock(&(IspInfo.SpinLockIspRef));
 		IspInfo.UserCount = 0;
+		spin_unlock(&(IspInfo.SpinLockIspRef));
 		/*  */
 		IspInfo.IrqInfo.Mask[ISP_IRQ_TYPE_INT_CAM_A_ST][SIGNAL_INT] = INT_ST_MASK_CAM;
 		IspInfo.IrqInfo.Mask[ISP_IRQ_TYPE_INT_CAM_B_ST][SIGNAL_INT] = INT_ST_MASK_CAM;
@@ -9495,9 +10438,9 @@ static MINT32 ISP_suspend(
 
 	if (IspInfo.UserCount == 0) {
 		/* Only print cama log */
-		if (0 == strcmp(moduleName, IRQ_CB_TBL[ISP_IRQ_TYPE_INT_CAM_A_ST].device_name))
+		if (0 == strcmp(moduleName, IRQ_CB_TBL[ISP_IRQ_TYPE_INT_CAM_A_ST].device_name)) {
 			LOG_DBG("%s - X. UserCount=0\n", moduleName);
-
+		}
 		return 0;
 	}
 
@@ -9541,19 +10484,21 @@ static MINT32 ISP_suspend(
 	}
 
 	if (module < 0)
-		return ret;
+		return ret;/*return here for those modules who is not linked with sensor*/
 
 	LOG_INF("%s_suspend: E.\n", moduleName);
 	regVal = ISP_RD32(CAM_REG_TG_VF_CON(module));
 	/*LOG_DBG("%s: Rs_TG(0x%08x)\n", moduleName, regVal);*/
 
 	if (regVal & 0x01) {
+		SuspnedRecord[module] = 1;
 		/* disable VF */
 		ISP_WR32(CAM_REG_TG_VF_CON(module), (regVal & (~0x01)));
 
 		/* wait TG idle*/
 		loopCnt = 3;
 		waitirq.Type = IrqType;
+		waitirq.bDumpReg = 0;
 		waitirq.EventInfo.Clear = ISP_IRQ_CLEAR_WAIT;
 		waitirq.EventInfo.Status = VS_INT_ST;
 		waitirq.EventInfo.St_type = SIGNAL_INT;
@@ -9597,10 +10542,11 @@ static MINT32 ISP_suspend(
 		if it has P1_DON after set vf disable, g_BkReg no need to add 1 */
 		regTGSt = ISP_RD32_TG_CAM_FRM_CNT(IrqType, module);
 		g_BkReg[IrqType].CAM_TG_INTER_ST = regTGSt;
-
+		regVal = ISP_RD32(CAM_REG_TG_SEN_MODE(module));
+		ISP_WR32(CAM_REG_TG_SEN_MODE(module), (regVal & (~0x01)));
 		Disable_Unprepare_cg_clock();
-	}
-
+	} else
+		SuspnedRecord[module] = 0;
 #else
 	MUINT32 regTG1Val = ISP_RD32(ISP_ADDR + 0x414);
 	MUINT32 regTG2Val = ISP_RD32(ISP_ADDR + 0x2414);
@@ -9692,9 +10638,9 @@ static MINT32 ISP_resume(struct platform_device *pDev)
 
 	if (IspInfo.UserCount == 0) {
 		/* Only print cama log */
-		if (0 == strcmp(moduleName, IRQ_CB_TBL[ISP_IRQ_TYPE_INT_CAM_A_ST].device_name))
+		if (0 == strcmp(moduleName, IRQ_CB_TBL[ISP_IRQ_TYPE_INT_CAM_A_ST].device_name)) {
 			LOG_DBG("%s - X. UserCount=0\n", moduleName);
-
+		}
 		return 0;
 	}
 
@@ -9744,27 +10690,14 @@ static MINT32 ISP_resume(struct platform_device *pDev)
 
 	Prepare_Enable_cg_clock();
 
-	/*enable CMOS*/
-	regVal = ISP_RD32(CAM_REG_TG_SEN_MODE(module));
-	/*LOG_DBG("%s: Rs_TG_Cmos(0x%08x)\n", moduleName, regVal);*/
-	if (0 == (regVal | 0x0)) {
-		ISP_WR32(CAM_REG_TG_SEN_MODE(module), (regVal | 0x01));
+	if (SuspnedRecord[module]) {
+		SuspnedRecord[module] = 0;
+		/*cmos*/
 		regVal = ISP_RD32(CAM_REG_TG_SEN_MODE(module));
-		/*LOG_DBG("%s: Rs_TG_Cmos'(0x%08x)\n", moduleName, regVal);*/
-	}
-
-	/* enable VF */
-	regVal = ISP_RD32(CAM_REG_TG_VF_CON(module));
-	/*LOG_DBG("%s: Rs_TG(0x%08x)\n", moduleName, regVal);*/
-	if (0 == (regVal | 0x0)) {
-		ISP_WR32(CAM_REG_TG_VF_CON(module), (regVal | 0x01));
-
-		/* */
+		ISP_WR32(CAM_REG_TG_SEN_MODE(module), (regVal | 0x01));
+		/*vf*/
 		regVal = ISP_RD32(CAM_REG_TG_VF_CON(module));
-		/*LOG_DBG("%s: Rs_TG'(0x%08x),%d_%d_0x%x\n", moduleName, regVal,
-			((ISP_RD32(CAM_REG_TG_INTER_ST(module)) & 0x00FF0000)>> 16),
-			ISP_RD32_TG_CAM_FRM_CNT(IrqType, module),
-			ISP_RD32(CAM_REG_TG_INTER_ST(module)));*/
+		ISP_WR32(CAM_REG_TG_VF_CON(module), (regVal | 0x01));
 	}
 
 #else
@@ -10300,6 +11233,287 @@ static ssize_t CAMIO_RegDebug(
 /*******************************************************************************
 *
 ********************************************************************************/
+
+static int isp_p2_ke_dump_read(struct seq_file *m, void *v)
+{
+#ifdef AEE_DUMP_REDUCE_MEMORY
+	int i;
+
+	LOG_INF("isp p2 ke dump start!! g_bDumpPhyISPBuf:%d\n", g_bDumpPhyISPBuf);
+	LOG_INF("g_bDumpPhyISPBuf:%d, g_tdriaddr:0x%x, g_cmdqaddr:0x%x\n",
+		g_bDumpPhyISPBuf, g_tdriaddr, g_cmdqaddr);
+	seq_puts(m, "============ isp p2 ke dump register============\n");
+	seq_printf(m, "===isp p2 you can trust below info: g_bDumpPhyISPBuf:%d===\n", g_bDumpPhyISPBuf);
+	seq_printf(m, "===isp p2 g_bDumpPhyISPBuf:%d, g_tdriaddr:0x%x, g_cmdqaddr:0x%x===\n", g_bDumpPhyISPBuf,
+		g_tdriaddr, g_cmdqaddr);
+	seq_puts(m, "===isp p2 hw physical register===\n");
+	mutex_lock(&gIspMutex);
+	if (g_bDumpPhyISPBuf == MFALSE) {
+		mutex_unlock(&gIspMutex);
+		return 0;
+	}
+	if (g_pPhyISPBuffer != NULL) {
+		for (i = 0; i < (ISP_DIP_PHYSICAL_REG_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+					DIP_A_BASE_HW+4*i, (unsigned int)g_pPhyISPBuffer[i],
+					DIP_A_BASE_HW+4*(i+1), (unsigned int)g_pPhyISPBuffer[i+1],
+					DIP_A_BASE_HW+4*(i+2), (unsigned int)g_pPhyISPBuffer[i+2],
+					DIP_A_BASE_HW+4*(i+3), (unsigned int)g_pPhyISPBuffer[i+3]);
+		}
+	} else {
+		LOG_INF("g_pPhyISPBuffer:(0x%pK)\n", g_pPhyISPBuffer);
+	}
+	seq_puts(m, "===isp p2 tpipe buffer Info===\n");
+	if (g_pKWTpipeBuffer != NULL) {
+		for (i = 0; i < (MAX_ISP_TILE_TDR_HEX_NO >> 2); i = i + 4) {
+			seq_printf(m, "0x%08X\n0x%08X\n0x%08X\n0x%08X\n",
+					(unsigned int)g_pKWTpipeBuffer[i],
+					(unsigned int)g_pKWTpipeBuffer[i+1],
+					(unsigned int)g_pKWTpipeBuffer[i+2],
+					(unsigned int)g_pKWTpipeBuffer[i+3]);
+		}
+	}
+	seq_puts(m, "===isp p2 cmdq buffer Info===\n");
+	if (g_pKWCmdqBuffer != NULL) {
+		for (i = 0; i < (MAX_ISP_CMDQ_BUFFER_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "[0x%08X 0x%08X 0x%08X 0x%08X]\n",
+					(unsigned int)g_pKWCmdqBuffer[i],
+					(unsigned int)g_pKWCmdqBuffer[i+1],
+					(unsigned int)g_pKWCmdqBuffer[i+2],
+					(unsigned int)g_pKWCmdqBuffer[i+3]);
+		}
+	}
+	seq_puts(m, "===isp p2 vir isp buffer Info===\n");
+	if (g_pKWVirISPBuffer != NULL) {
+		for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+					DIP_A_BASE_HW+4*i, (unsigned int)g_pKWVirISPBuffer[i],
+					DIP_A_BASE_HW+4*(i+1), (unsigned int)g_pKWVirISPBuffer[i+1],
+					DIP_A_BASE_HW+4*(i+2), (unsigned int)g_pKWVirISPBuffer[i+2],
+					DIP_A_BASE_HW+4*(i+3), (unsigned int)g_pKWVirISPBuffer[i+3]);
+		}
+	}
+	mutex_unlock(&gIspMutex);
+	seq_puts(m, "============ isp p2 ke dump debug ============\n");
+	LOG_INF("isp p2 ke dump end\n");
+#else
+	int i;
+
+	seq_puts(m, "============ isp p2 ke dump register============\n");
+	seq_puts(m, "isp p2 hw physical register\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_PhyISPBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_PhyISPBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_PhyISPBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_PhyISPBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 tpipe buffer Info\n");
+	for (i = 0; i < (MAX_ISP_TILE_TDR_HEX_NO >> 2); i = i + 4) {
+		seq_printf(m, "0x%08X\n0x%08X\n0x%08X\n0x%08X\n",
+				(unsigned int)g_KWTpipeBuffer[i],
+				(unsigned int)g_KWTpipeBuffer[i+1],
+				(unsigned int)g_KWTpipeBuffer[i+2],
+				(unsigned int)g_KWTpipeBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 cmdq buffer Info\n");
+	for (i = 0; i < (MAX_ISP_CMDQ_BUFFER_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "[0x%08X 0x%08X 0x%08X 0x%08X]\n",
+				(unsigned int)g_KWCmdqBuffer[i],
+				(unsigned int)g_KWCmdqBuffer[i+1],
+				(unsigned int)g_KWCmdqBuffer[i+2],
+				(unsigned int)g_KWCmdqBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 vir isp buffer Info\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_KWVirISPBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_KWVirISPBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_KWVirISPBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_KWVirISPBuffer[i+3]);
+	}
+	seq_puts(m, "============ isp p2 ke dump debug ============\n");
+#endif
+	return 0;
+}
+
+static int proc_isp_p2_ke_dump_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, isp_p2_ke_dump_read, NULL);
+}
+
+static const struct file_operations isp_p2_ke_dump_proc_fops = {
+	.owner = THIS_MODULE,
+	.open = proc_isp_p2_ke_dump_open,
+	.read = seq_read,
+};
+
+/*******************************************************************************
+*
+********************************************************************************/
+
+static int isp_p2_dump_read(struct seq_file *m, void *v)
+{
+#ifdef AEE_DUMP_REDUCE_MEMORY
+	int i;
+
+	LOG_INF("isp p2 ne dump start!! g_bUserBufIsReady:%d, g_bIonBufferAllocated:%d\n",
+		g_bUserBufIsReady, g_bIonBufferAllocated);
+	LOG_INF("isp p2 g_bDumpPhyB:%d, tdriadd:0x%x,imgiadd:0x%x,dmgiadd:0x%x\n",
+		g_bDumpPhyISPBuf, g_dumpInfo.tdri_baseaddr, g_dumpInfo.imgi_baseaddr, g_dumpInfo.dmgi_baseaddr);
+	seq_puts(m, "============ isp p2 ne dump register============\n");
+	seq_printf(m, "===isp p2 you can trust below info:UserBufIsReady:%d===\n", g_bUserBufIsReady);
+	seq_printf(m, "===isp p2 g_bDumpPhyB:%d,tdriadd:0x%x,imgiadd:0x%x,dmgiadd:0x%x===\n",
+		g_bDumpPhyISPBuf, g_dumpInfo.tdri_baseaddr, g_dumpInfo.imgi_baseaddr, g_dumpInfo.dmgi_baseaddr);
+	seq_puts(m, "===isp p2 hw physical register===\n");
+	mutex_lock(&gIspMutex);
+	if (g_bUserBufIsReady == MFALSE) {
+		mutex_unlock(&gIspMutex);
+		return 0;
+	}
+	if (g_pPhyISPBuffer != NULL) {
+		for (i = 0; i < (ISP_DIP_PHYSICAL_REG_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+					DIP_A_BASE_HW+4*i, (unsigned int)g_pPhyISPBuffer[i],
+					DIP_A_BASE_HW+4*(i+1), (unsigned int)g_pPhyISPBuffer[i+1],
+					DIP_A_BASE_HW+4*(i+2), (unsigned int)g_pPhyISPBuffer[i+2],
+					DIP_A_BASE_HW+4*(i+3), (unsigned int)g_pPhyISPBuffer[i+3]);
+		}
+	} else {
+		LOG_INF("g_pPhyISPBuffer:(0x%pK)\n", g_pPhyISPBuffer);
+	}
+	seq_puts(m, "===isp p2 tpipe buffer Info===\n");
+	if (g_pTpipeBuffer != NULL) {
+		for (i = 0; i < (MAX_ISP_TILE_TDR_HEX_NO >> 2); i = i + 4) {
+			seq_printf(m, "0x%08X\n0x%08X\n0x%08X\n0x%08X\n",
+					(unsigned int)g_pTpipeBuffer[i],
+					(unsigned int)g_pTpipeBuffer[i+1],
+					(unsigned int)g_pTpipeBuffer[i+2],
+					(unsigned int)g_pTpipeBuffer[i+3]);
+		}
+	}
+	seq_puts(m, "===isp p2 cmdq buffer Info===\n");
+	if (g_pCmdqBuffer != NULL) {
+		for (i = 0; i < (MAX_ISP_CMDQ_BUFFER_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "[0x%08X 0x%08X 0x%08X 0x%08X]\n",
+					(unsigned int)g_pCmdqBuffer[i],
+					(unsigned int)g_pCmdqBuffer[i+1],
+					(unsigned int)g_pCmdqBuffer[i+2],
+					(unsigned int)g_pCmdqBuffer[i+3]);
+		}
+	}
+	seq_puts(m, "===isp p2 vir isp buffer Info===\n");
+	if (g_pVirISPBuffer != NULL) {
+		for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+					DIP_A_BASE_HW+4*i, (unsigned int)g_pVirISPBuffer[i],
+					DIP_A_BASE_HW+4*(i+1), (unsigned int)g_pVirISPBuffer[i+1],
+					DIP_A_BASE_HW+4*(i+2), (unsigned int)g_pVirISPBuffer[i+2],
+					DIP_A_BASE_HW+4*(i+3), (unsigned int)g_pVirISPBuffer[i+3]);
+		}
+	}
+	seq_puts(m, "===isp p2 tuning buffer Info===\n");
+	if (g_pTuningBuffer != NULL) {
+		for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+			seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+					DIP_A_BASE_HW+4*i, (unsigned int)g_pTuningBuffer[i],
+					DIP_A_BASE_HW+4*(i+1), (unsigned int)g_pTuningBuffer[i+1],
+					DIP_A_BASE_HW+4*(i+2), (unsigned int)g_pTuningBuffer[i+2],
+					DIP_A_BASE_HW+4*(i+3), (unsigned int)g_pTuningBuffer[i+3]);
+		}
+	}
+	mutex_unlock(&gIspMutex);
+	seq_puts(m, "============ isp p2 ne dump debug ============\n");
+	LOG_INF("isp p2 ne dump end\n");
+
+#else
+	int i;
+
+	seq_puts(m, "============ isp p2 ne dump register============\n");
+	seq_puts(m, "isp p2 hw physical register\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_PhyISPBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_PhyISPBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_PhyISPBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_PhyISPBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 tpipe buffer Info\n");
+	for (i = 0; i < (MAX_ISP_TILE_TDR_HEX_NO >> 2); i = i + 4) {
+		seq_printf(m, "0x%08X\n0x%08X\n0x%08X\n0x%08X\n",
+				(unsigned int)g_TpipeBuffer[i],
+				(unsigned int)g_TpipeBuffer[i+1],
+				(unsigned int)g_TpipeBuffer[i+2],
+				(unsigned int)g_TpipeBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 cmdq buffer Info\n");
+	for (i = 0; i < (MAX_ISP_CMDQ_BUFFER_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "[0x%08X 0x%08X 0x%08X 0x%08X]\n",
+				(unsigned int)g_CmdqBuffer[i],
+				(unsigned int)g_CmdqBuffer[i+1],
+				(unsigned int)g_CmdqBuffer[i+2],
+				(unsigned int)g_CmdqBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 vir isp buffer Info\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_VirISPBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_VirISPBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_VirISPBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_VirISPBuffer[i+3]);
+	}
+	seq_puts(m, "isp p2 tuning buffer Info\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_TuningBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_TuningBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_TuningBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_TuningBuffer[i+3]);
+	}
+	seq_puts(m, "============ kernel warning ============\n");
+	seq_puts(m, "ke:isp p2 tpipe buffer Info\n");
+	for (i = 0; i < (MAX_ISP_TILE_TDR_HEX_NO >> 2); i = i + 4) {
+		seq_printf(m, "0x%08X\n0x%08X\n0x%08X\n0x%08X\n",
+				(unsigned int)g_KWTpipeBuffer[i],
+				(unsigned int)g_KWTpipeBuffer[i+1],
+				(unsigned int)g_KWTpipeBuffer[i+2],
+				(unsigned int)g_KWTpipeBuffer[i+3]);
+	}
+	seq_puts(m, "ke:isp p2 cmdq buffer Info\n");
+	for (i = 0; i < (MAX_ISP_CMDQ_BUFFER_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "[0x%08X 0x%08X 0x%08X 0x%08X]\n",
+				(unsigned int)g_KWCmdqBuffer[i],
+				(unsigned int)g_KWCmdqBuffer[i+1],
+				(unsigned int)g_KWCmdqBuffer[i+2],
+				(unsigned int)g_KWCmdqBuffer[i+3]);
+	}
+	seq_puts(m, "ke:isp p2 vir isp buffer Info\n");
+	for (i = 0; i < (ISP_DIP_REG_SIZE >> 2); i = i + 4) {
+		seq_printf(m, "(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)(0x%08X,0x%08X)\n",
+				DIP_A_BASE_HW+4*i, (unsigned int)g_KWVirISPBuffer[i],
+				DIP_A_BASE_HW+4*(i+1), (unsigned int)g_KWVirISPBuffer[i+1],
+				DIP_A_BASE_HW+4*(i+2), (unsigned int)g_KWVirISPBuffer[i+2],
+				DIP_A_BASE_HW+4*(i+3), (unsigned int)g_KWVirISPBuffer[i+3]);
+	}
+	seq_puts(m, "============ isp p2 ne dump debug ============\n");
+#endif
+	return 0;
+}
+
+static int proc_isp_p2_dump_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, isp_p2_dump_read, NULL);
+}
+
+static const struct file_operations isp_p2_dump_proc_fops = {
+	.owner = THIS_MODULE,
+	.open = proc_isp_p2_dump_open,
+	.read = seq_read,
+};
+
+/*******************************************************************************
+*
+********************************************************************************/
 static const struct file_operations fcameraisp_proc_fops = {
 	.read = ISP_DumpRegToProc,
 	.write = ISP_RegDebug,
@@ -10317,6 +11531,8 @@ static MINT32 __init ISP_Init(void)
 	MINT32 Ret = 0, j;
 	void *tmp;
 	struct device_node *node = NULL;
+	struct proc_dir_entry *proc_entry;
+	struct proc_dir_entry *isp_p2_dir;
 
 	int i;
 	/*  */
@@ -10411,6 +11627,13 @@ static MINT32 __init ISP_Init(void)
 	proc_create("driver/isp_reg", 0, NULL, &fcameraisp_proc_fops);
 	proc_create("driver/camio_reg", 0, NULL, &fcameraio_proc_fops);
 
+	isp_p2_dir = proc_mkdir("isp_p2", NULL);
+	if (!isp_p2_dir) {
+		LOG_ERR("[%s]: fail to mkdir /proc/isp_p2\n", __func__);
+		return 0;
+	}
+	proc_entry = proc_create("isp_p2_dump", S_IRUGO, isp_p2_dir, &isp_p2_dump_proc_fops);
+	proc_entry = proc_create("isp_p2_kedump", S_IRUGO, isp_p2_dir, &isp_p2_ke_dump_proc_fops);
 	for (j = 0; j < ISP_IRQ_TYPE_AMOUNT; j++) {
 		switch (j) {
 		case ISP_IRQ_TYPE_INT_CAM_A_ST:
@@ -10541,6 +11764,8 @@ static MINT32 __init ISP_Init(void)
 #endif
 
 
+	for (i = 0; i < ISP_DEV_NODE_NUM; i++)
+		SuspnedRecord[i] = 0;
 
 	LOG_DBG("- X. Ret: %d.", Ret);
 	return Ret;
@@ -11463,8 +12688,8 @@ CAM_FrameST Irq_CAM_FrameStatus(ISP_DEV_NODE_ENUM module, ISP_IRQ_TYPE_ENUM irq_
 
 	if (product == 1)
 		return CAM_FST_LAST_WORKING_FRAME;
-	else if (product == 0)
-		return CAM_FST_DROP_FRAME;
+	/* else if (product == 0)
+		return CAM_FST_DROP_FRAME; */
 	else
 		return CAM_FST_NORMAL;
 }
@@ -11654,8 +12879,8 @@ static CAM_FrameST Irq_CAM_SttFrameStatus(ISP_DEV_NODE_ENUM module, ISP_IRQ_TYPE
 
 	if (product == 1)
 		return CAM_FST_LAST_WORKING_FRAME;
-	else if (product == 0)
-		return CAM_FST_DROP_FRAME;
+	/* else if (product == 0)
+		return CAM_FST_DROP_FRAME; */
 	else
 		return CAM_FST_NORMAL;
 
@@ -11824,7 +13049,7 @@ static int32_t ISP_WaitTimestampReady(MUINT32 module, MUINT32 dma_id)
 	#if 1
 	for (wait_cnt = 3; wait_cnt > 0; wait_cnt--) {
 		_timeout = wait_event_interruptible_timeout(
-			IspInfo.WaitQueueHead,
+			IspInfo.WaitQueueHead[module],
 			(IspInfo.TstpQInfo[module].Dmao[dma_id].TotalWrCnt >
 				IspInfo.TstpQInfo[module].Dmao[dma_id].TotalRdCnt),
 			ISP_MsToJiffies(2000));
@@ -12105,7 +13330,7 @@ static irqreturn_t ISP_Irq_DIP_A(MINT32  Irq, void *DeviceId)
 		Irq, (ISP_DIP_A_BASE + 0x030), IrqINTStatus, (ISP_DIP_A_BASE + 0x034), IrqCQStatus);*/
 
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[ISP_IRQ_TYPE_INT_DIP_A_ST]);
 
 	return IRQ_HANDLED;
 
@@ -12269,7 +13494,7 @@ static irqreturn_t ISP_Irq_CAMSV_0(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -12280,7 +13505,7 @@ static irqreturn_t ISP_Irq_CAMSV_0(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -12451,7 +13676,7 @@ static irqreturn_t ISP_Irq_CAMSV_1(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -12462,7 +13687,7 @@ static irqreturn_t ISP_Irq_CAMSV_1(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -12634,7 +13859,7 @@ static irqreturn_t ISP_Irq_CAMSV_2(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -12645,7 +13870,7 @@ static irqreturn_t ISP_Irq_CAMSV_2(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -12815,7 +14040,7 @@ static irqreturn_t ISP_Irq_CAMSV_3(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -12826,7 +14051,7 @@ static irqreturn_t ISP_Irq_CAMSV_3(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -12996,7 +14221,7 @@ static irqreturn_t ISP_Irq_CAMSV_4(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -13007,7 +14232,7 @@ static irqreturn_t ISP_Irq_CAMSV_4(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -13178,7 +14403,7 @@ static irqreturn_t ISP_Irq_CAMSV_5(MINT32  Irq, void *DeviceId)
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -13189,7 +14414,7 @@ static irqreturn_t ISP_Irq_CAMSV_5(MINT32  Irq, void *DeviceId)
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SV_SOF_INT_ST | SV_SW_PASS1_DON_ST | SV_VS1_ST)) {
@@ -13599,7 +14824,7 @@ LB_CAMA_SOF_IGNORE:
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -13610,7 +14835,7 @@ LB_CAMA_SOF_IGNORE:
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SOF_INT_ST | SW_PASS1_DON_ST | VS_INT_ST)) {
@@ -13735,7 +14960,7 @@ static irqreturn_t ISP_Irq_CAM_B(MINT32  Irq, void *DeviceId)
 	spin_lock(&(IspInfo.SpinLockIrq[module]));
 	if (IrqStatus & VS_INT_ST) {
 		Vsync_cnt[1]++;
-		/* LOG_INF("CAMB N3D:0x%x\n",Vsync_cnt[1]); */
+		/*LOG_INF("CAMB N3D:0x%x\n",Vsync_cnt[1]);*/
 	}
 	if (IrqStatus & SW_PASS1_DON_ST) {
 		time = ktime_get(); /* ns */
@@ -14018,7 +15243,7 @@ LB_CAMB_SOF_IGNORE:
 				if (tmp & 0x1) {
 					IspInfo.IrqInfo.LastestSigTime_usec[module][cnt] = (unsigned int)time_frmb.tv_usec;
 					IspInfo.IrqInfo.LastestSigTime_sec[module][cnt] = (unsigned int) time_frmb.tv_sec;
-					IspInfo.IrqInfo.PassedBySigCnt[i][module][cnt]++;
+					IspInfo.IrqInfo.PassedBySigCnt[module][cnt][i]++;
 				}
 				tmp = tmp >> 1;
 				cnt++;
@@ -14029,7 +15254,7 @@ LB_CAMB_SOF_IGNORE:
 	}
 	spin_unlock(&(IspInfo.SpinLockIrq[module]));
 	/*  */
-	wake_up_interruptible(&IspInfo.WaitQueueHead);
+	wake_up_interruptible(&IspInfo.WaitQueueHead[module]);
 
 	/* dump log, use tasklet */
 	if (IrqStatus & (SOF_INT_ST | SW_PASS1_DON_ST | VS_INT_ST)) {
