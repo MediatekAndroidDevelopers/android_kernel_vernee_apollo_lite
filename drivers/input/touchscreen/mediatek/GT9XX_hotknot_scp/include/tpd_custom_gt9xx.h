@@ -157,7 +157,6 @@ extern void force_reset_guitar(void);
 /***************************PART3:OTHER define*********************************/
 #define GTP_DRIVER_VERSION          "V2.1<2014/01/10>"
 #define GTP_I2C_NAME                "Goodix-TS"
-#define GT91XX_CONFIG_PROC_FILE     "gt9xx_config"
 #define GTP_POLL_TIME               10
 #define GTP_ADDR_LENGTH             2
 #define GTP_CONFIG_MIN_LENGTH       186
