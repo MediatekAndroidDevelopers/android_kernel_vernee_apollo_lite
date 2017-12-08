@@ -23,6 +23,8 @@
 
 #include <linux/mutex.h>
 
+#include <linux/clocksource.h>
+
 #include <scp_ipi.h>
 #ifdef CONFIG_MTK_DO /* TODO: check only once in one file */
 #include <do.h>
@@ -392,5 +394,3 @@ void audio_task_manager_deinit(void)
 		}
 	}
 }
-
-
