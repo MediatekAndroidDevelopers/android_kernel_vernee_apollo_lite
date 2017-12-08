@@ -2061,7 +2061,7 @@ VOID nicRxProcessEventPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb
 				/* fill event body */
 				prBowLinkConnected = (P_BOW_LINK_CONNECTED) (prBowEvent->aucPayload);
 				prBowLinkConnected->rChannel.ucChannelNum = prEventBtOverWifi->ucSelectedChannel;
-				kalMemZero(prBowLinkConnected->aucPeerAddress, MAC_ADDR_LEN);	/* @FIXME */
+				kalMemZero(prBowLinkConnected->aucPeerAddress, sizeof(UINT_8));	/* @FIXME */
 
 				kalIndicateBOWEvent(prAdapter->prGlueInfo, prBowEvent);
 			} else {
@@ -2073,7 +2073,7 @@ VOID nicRxProcessEventPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb
 				/* fill event body */
 				prBowLinkDisconnected = (P_BOW_LINK_DISCONNECTED) (prBowEvent->aucPayload);
 				prBowLinkDisconnected->ucReason = 0;	/* @FIXME */
-				kalMemZero(prBowLinkDisconnected->aucPeerAddress, MAC_ADDR_LEN);	/* @FIXME */
+				kalMemZero(prBowLinkDisconnected->aucPeerAddress, sizeof(UINT_8));	/* @FIXME */
 
 				kalIndicateBOWEvent(prAdapter->prGlueInfo, prBowEvent);
 			}
