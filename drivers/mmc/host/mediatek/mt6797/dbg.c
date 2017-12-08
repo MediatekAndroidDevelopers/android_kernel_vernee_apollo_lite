@@ -3324,17 +3324,21 @@ static const struct file_operations msdc_voltage_flag_fops = {
 
 int msdc_debug_proc_init(void)
 {
+#if 0
 	struct proc_dir_entry *prEntry;
 	struct proc_dir_entry *tune;
 	struct proc_dir_entry *tune_flag;
+#endif
 	kuid_t uid;
 	kgid_t gid;
+#if 0
 #ifdef MSDC_HQA
 	struct proc_dir_entry *voltage_flag;
 #endif
+#endif
 	uid = make_kuid(&init_user_ns, 0);
 	gid = make_kgid(&init_user_ns, 1001);
-
+#if 0
 	prEntry = proc_create("msdc_debug", PROC_PERM, NULL, &msdc_proc_fops);
 
 	if (prEntry)
@@ -3382,6 +3386,7 @@ int msdc_debug_proc_init(void)
 	else
 		pr_err("[%s]: failed to create /proc/msdc_voltage_flag\n",
 			__func__);
+#endif
 #endif
 
 #ifdef MSDC_DMA_ADDR_DEBUG

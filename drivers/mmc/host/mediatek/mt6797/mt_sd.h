@@ -42,7 +42,7 @@
 #define TUNE_LEGACY_DATA_READ    (0x1 << 5) /* legacy transfer data crc */
 #define TUNE_AUTOK_PASS          (0x1 << 6) /* autok pass flag */
 
-#define MSDC_DMA_ADDR_DEBUG
+//#define MSDC_DMA_ADDR_DEBUG
 /*#define MSDC_HQA*/
 
 #define MSDC_STRIPE_DT
