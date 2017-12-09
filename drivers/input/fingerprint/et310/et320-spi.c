@@ -264,7 +264,7 @@ int fp_mass_read(struct fp_data *fp, u8 addr, u8 *buf, int read_len)
 	spi_message_init(&m);
 	spi_setup_xfer(&t_set_addr);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_addr);
+	strncpy(spi_tx_local_buf, write_addr, 4);
 	spi_message_add_tail(&t_set_addr, &m);
 	status = spi_sync(spi, &m);
 
@@ -272,7 +272,7 @@ int fp_mass_read(struct fp_data *fp, u8 addr, u8 *buf, int read_len)
 	spi_message_init(&m);
 	spi_setup_xfer(&t_read_data);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, read_addr);
+	strncpy(spi_tx_local_buf, read_addr, 4);
 	spi_message_add_tail(&t_read_data, &m);
 	status = spi_sync(spi, &m);
 
@@ -325,7 +325,7 @@ int fp_io_read_register(struct fp_data *fp, u8 *addr, u8 *buf)
 	spi_message_init(&m);
 	spi_setup_xfer(&t_set_addr);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_addr);
+	strncpy(spi_tx_local_buf, write_addr, 4);
 	spi_message_add_tail(&t_set_addr, &m);
 	spi_sync(spi, &m);
 
@@ -333,7 +333,7 @@ int fp_io_read_register(struct fp_data *fp, u8 *addr, u8 *buf)
 	spi_message_init(&m);
 	spi_setup_xfer(&t);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, read_addr);
+	strncpy(spi_tx_local_buf, read_addr, 4);
 	spi_message_add_tail(&t, &m);
 	status = spi_sync(spi, &m);
 
@@ -397,7 +397,7 @@ int fp_io_write_register(struct fp_data *fp, u8 *buf)
 	write_value[1] = val[1];
 	spi_setup_xfer(&t1);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_addr);
+	strncpy(spi_tx_local_buf, write_addr, 4);
 	spi_message_add_tail(&t1, &m);
 	spi_sync(spi, &m);
 
@@ -405,7 +405,7 @@ int fp_io_write_register(struct fp_data *fp, u8 *buf)
 	spi_message_init(&m);
 	spi_setup_xfer(&t2);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_value);
+	strncpy(spi_tx_local_buf, write_value, 4);
 	spi_message_add_tail(&t2, &m);
 	status = spi_sync(spi, &m);
 
@@ -446,7 +446,7 @@ int fp_read_register(struct fp_data *fp, u8 addr, u8 *buf)
 	spi_message_init(&m);
 	spi_setup_xfer(&t1);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_addr);
+	strncpy(spi_tx_local_buf, write_addr, 4);
 	spi_message_add_tail(&t1, &m);
 	spi_sync(spi, &m);
 
@@ -454,7 +454,7 @@ int fp_read_register(struct fp_data *fp, u8 addr, u8 *buf)
 	spi_message_init(&m);
 	spi_setup_xfer(&t2);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, read_addr);
+	strncpy(spi_tx_local_buf, read_addr, 4);
 	spi_message_add_tail(&t2, &m);
 	status = spi_sync(spi, &m);
 
@@ -492,7 +492,7 @@ int fp_set_single_register(struct fp_data *fp, u8 addr, u8 val)
 	spi = fp->spi;
 	spi_setup_xfer(&t1);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_addr);
+	strncpy(spi_tx_local_buf, write_addr, 4);
 	spi_message_add_tail(&t1, &m);
 	spi_sync(spi, &m);
 
@@ -500,7 +500,7 @@ int fp_set_single_register(struct fp_data *fp, u8 addr, u8 val)
 	spi_message_init(&m);
 	spi_setup_xfer(&t2);
 	memset(spi_tx_local_buf, 0, 4);
-	strcpy(spi_tx_local_buf, write_value);
+	strncpy(spi_tx_local_buf, write_value, 4);
 	spi_message_add_tail(&t2, &m);
 	status = spi_sync(spi, &m);
 
