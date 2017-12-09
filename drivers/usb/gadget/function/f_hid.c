@@ -118,25 +118,6 @@ static struct usb_endpoint_descriptor hidg_hs_out_ep_desc = {
 				      */
 };
 
-static struct usb_ss_ep_comp_descriptor hidg_ss_comp_desc = {
-	.bLength =      sizeof(hidg_ss_comp_desc),
-	.bDescriptorType =  USB_DT_SS_ENDPOINT_COMP,
-	/* .wBytesPerInterval =    DYNAMIC */
-};
-
-
-static struct usb_descriptor_header *hidg_ss_descriptors[] = {
-	(struct usb_descriptor_header *)&hidg_interface_desc,
-	(struct usb_descriptor_header *)&hidg_desc,
-	/* share ep desc with hs */
-	(struct usb_descriptor_header *)&hidg_hs_in_ep_desc,
-	(struct usb_descriptor_header *)&hidg_ss_comp_desc,
-	/* share ep desc with hs */
-	(struct usb_descriptor_header *)&hidg_hs_out_ep_desc,
-	(struct usb_descriptor_header *)&hidg_ss_comp_desc,
-	NULL,
-};
-
 static struct usb_descriptor_header *hidg_hs_descriptors[] = {
 	(struct usb_descriptor_header *)&hidg_interface_desc,
 	(struct usb_descriptor_header *)&hidg_desc,
@@ -572,7 +553,7 @@ const struct file_operations f_hidg_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int hidg_bind(struct usb_configuration *c, struct usb_function *f)
+static int __init hidg_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_ep		*ep;
 	struct f_hidg		*hidg = func_to_hidg(f);
@@ -625,10 +606,8 @@ static int hidg_bind(struct usb_configuration *c, struct usb_function *f)
 	hidg_hs_out_ep_desc.bEndpointAddress =
 		hidg_fs_out_ep_desc.bEndpointAddress;
 
-	hidg_ss_comp_desc.wBytesPerInterval = cpu_to_le16(hidg->report_length);
-
 	status = usb_assign_descriptors(f, hidg_fs_descriptors,
-			hidg_hs_descriptors, hidg_ss_descriptors);
+			hidg_hs_descriptors, NULL);
 	if (status)
 		goto fail;
 
@@ -703,20 +682,8 @@ static struct usb_gadget_strings *ct_func_strings[] = {
 
 /*-------------------------------------------------------------------------*/
 /*                             usb_configuration                           */
-static struct hidg_func_descriptor hid_data = {
-	.subclass = 0,		/* No subclass */
-	.protocol = 0,		/* Mouse Protocol */
-	.report_length = 4,
-	.report_desc_length = 7,
-	.report_desc = {
-		0x05, 0x01,	/* USAGE_PAGE (Generic Desktop)		*/
-		0x09, 0x00,	/* USAGE (None)				*/
-		0xa1, 0x01,	/* COLLECTION (Application)		*/
-		0xc0		/* END_COLLECTION			*/
-	}
-};
 
-int hidg_bind_config(struct usb_configuration *c,
+int __init hidg_bind_config(struct usb_configuration *c,
 			    struct hidg_func_descriptor *fdesc, int index)
 {
 	struct f_hidg *hidg;
@@ -738,9 +705,6 @@ int hidg_bind_config(struct usb_configuration *c,
 	hidg = kzalloc(sizeof *hidg, GFP_KERNEL);
 	if (!hidg)
 		return -ENOMEM;
-
-	if (!fdesc)
-		fdesc = &hid_data;
 
 	hidg->minor = index;
 	hidg->bInterfaceSubClass = fdesc->subclass;
@@ -773,7 +737,7 @@ int hidg_bind_config(struct usb_configuration *c,
 	return status;
 }
 
-int ghid_setup(struct usb_gadget *g, int count)
+int __init ghid_setup(struct usb_gadget *g, int count)
 {
 	int status;
 	dev_t dev;

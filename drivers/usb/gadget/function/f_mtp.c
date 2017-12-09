@@ -39,7 +39,6 @@
 #include <linux/usb/composite.h>
 
 #include "configfs.h"
-#include "usb_boost.h"
 
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
@@ -54,7 +53,6 @@
 #define STATE_BUSY                  2   /* processing userspace calls */
 #define STATE_CANCELED              3   /* transaction canceled by host */
 #define STATE_ERROR                 4   /* error from completion routine */
-#define STATE_RESET                 5   /* reset from device reset request */
 
 /* number of tx and rx requests to allocate */
 #define TX_REQ_MAX 4
@@ -73,7 +71,6 @@
 /* constants for device status */
 #define MTP_RESPONSE_OK             0x2001
 #define MTP_RESPONSE_DEVICE_BUSY    0x2019
-#define MTP_RESPONSE_DEVICE_CANCEL  0x201F
 #define DRIVER_NAME "mtp"
 
 static const char mtp_shortname[] = DRIVER_NAME "_usb";
@@ -116,14 +113,6 @@ struct mtp_dev {
 	uint16_t xfer_command;
 	uint32_t xfer_transaction_id;
 	int xfer_result;
-
-	struct work_struct device_reset_work;
-	int fileTransferSend;
-	char usb_functions[32];
-	int curr_mtp_func_index;
-	int usb_functions_no;
-	int epOut_halt;
-	int dev_disconnected;
 };
 
 static struct usb_interface_descriptor mtp_interface_desc = {
@@ -151,7 +140,7 @@ static struct usb_endpoint_descriptor mtp_ss_in_desc = {
 	.bDescriptorType        = USB_DT_ENDPOINT,
 	.bEndpointAddress       = USB_DIR_IN,
 	.bmAttributes           = USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize         = cpu_to_le16(1024),
+	.wMaxPacketSize         = __constant_cpu_to_le16(1024),
 };
 
 static struct usb_ss_ep_comp_descriptor mtp_ss_in_comp_desc = {
@@ -165,7 +154,7 @@ static struct usb_endpoint_descriptor mtp_ss_out_desc = {
 	.bDescriptorType        = USB_DT_ENDPOINT,
 	.bEndpointAddress       = USB_DIR_OUT,
 	.bmAttributes           = USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize         = cpu_to_le16(1024),
+	.wMaxPacketSize         = __constant_cpu_to_le16(1024),
 };
 
 static struct usb_ss_ep_comp_descriptor mtp_ss_out_comp_desc = {
@@ -378,11 +367,7 @@ static struct usb_request *mtp_request_new(struct usb_ep *ep, int buffer_size)
 		return NULL;
 
 	/* now allocate buffers for the requests */
-#if defined(CONFIG_64BIT) && defined(CONFIG_MTK_LM_MODE)
-	req->buf = kmalloc(buffer_size, GFP_KERNEL | GFP_DMA);
-#else
 	req->buf = kmalloc(buffer_size, GFP_KERNEL);
-#endif
 	if (!req->buf) {
 		usb_ep_free_request(ep, req);
 		return NULL;
@@ -547,19 +532,6 @@ fail:
 	return -1;
 }
 
-/* MTP QUEUE DEBUG */
-static pid_t active_pid;
-static char active_comm[TASK_COMM_LEN];
-struct mutex mtp_read_mutex;
-static int is_the_same_active(void)
-{
-	if (active_pid == current->pid)
-		return 1;
-	return 0;
-}
-#define MTP_QUEUE_DBG(fmt, args...)		\
-	pr_warn("MTP_QUEUE_DBG, <%s(), %d> " fmt, __func__, __LINE__, ## args)
-
 static ssize_t mtp_read(struct file *fp, char __user *buf,
 	size_t count, loff_t *pos)
 {
@@ -572,23 +544,9 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 
 	DBG(cdev, "mtp_read(%zu)\n", count);
 
-	/* MTP QUEUE DEBUG */
-	mutex_lock(&mtp_read_mutex);
-	if (!active_pid) {
-		active_pid = current->pid;
-		memcpy(active_comm, current->comm, sizeof(active_comm));
-		MTP_QUEUE_DBG("save active <%d,%s>\n", active_pid, active_comm);
-	} else if (!is_the_same_active()) {
-		MTP_QUEUE_DBG("more than one user <%d,%d>, <%s,%s>\n",
-			active_pid, current->pid, active_comm, current->comm);
-		BUG();
-	}
-
-	if (count > MTP_BULK_BUFFER_SIZE) {
-		/* MTP QUEUE DEBUG */
-		mutex_unlock(&mtp_read_mutex);
+	if (count > MTP_BULK_BUFFER_SIZE)
 		return -EINVAL;
-	}
+
 	/* we will block until we're online */
 	DBG(cdev, "mtp_read: waiting for online state\n");
 	ret = wait_event_interruptible(dev->read_wq,
@@ -602,8 +560,6 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 		/* report cancelation to userspace */
 		dev->state = STATE_READY;
 		spin_unlock_irq(&dev->lock);
-		/* MTP QUEUE DEBUG */
-		mutex_unlock(&mtp_read_mutex);
 		return -ECANCELED;
 	}
 	dev->state = STATE_BUSY;
@@ -623,17 +579,7 @@ requeue_req:
 	}
 
 	/* wait for a request to complete */
-	ret = wait_event_interruptible(dev->read_wq,
-				dev->rx_done || dev->state != STATE_BUSY);
-	if (dev->state == STATE_CANCELED) {
-		r = -ECANCELED;
-		if (!dev->rx_done)
-			usb_ep_dequeue(dev->ep_out, req);
-		spin_lock_irq(&dev->lock);
-		dev->state = STATE_CANCELED;
-		spin_unlock_irq(&dev->lock);
-		goto done;
-	}
+	ret = wait_event_interruptible(dev->read_wq, dev->rx_done);
 	if (ret < 0) {
 		r = ret;
 		usb_ep_dequeue(dev->ep_out, req);
@@ -661,8 +607,6 @@ done:
 	spin_unlock_irq(&dev->lock);
 
 	DBG(cdev, "mtp_read returning %zd\n", r);
-	/* MTP QUEUE DEBUG */
-	mutex_unlock(&mtp_read_mutex);
 	return r;
 }
 
@@ -828,7 +772,6 @@ static void send_file_work(struct work_struct *data)
 					__cpu_to_le32(dev->xfer_transaction_id);
 		}
 
-		usb_boost();
 		ret = vfs_read(filp, req->buf + hdr_size, xfer - hdr_size,
 								&offset);
 		if (ret < 0) {
@@ -874,8 +817,6 @@ static void receive_file_work(struct work_struct *data)
 	int64_t count;
 	int ret, cur_buf = 0;
 	int r = 0;
-	/* use this to avoid 4G copy issue */
-	int64_t total_size = 0;
 
 	/* read our parameters */
 	smp_rmb();
@@ -893,16 +834,6 @@ static void receive_file_work(struct work_struct *data)
 
 			read_req->length = (count > MTP_BULK_BUFFER_SIZE
 					? MTP_BULK_BUFFER_SIZE : count);
-
-			if (total_size >= 0xFFFFFFFF)
-				read_req->short_not_ok = 0;
-			else {
-				if (0 == (read_req->length % dev->ep_out->maxpacket))
-					read_req->short_not_ok = 1;
-				else
-					read_req->short_not_ok = 0;
-			}
-
 			dev->rx_done = 0;
 			ret = usb_ep_queue(dev->ep_out, read_req, GFP_KERNEL);
 			if (ret < 0) {
@@ -913,14 +844,11 @@ static void receive_file_work(struct work_struct *data)
 		}
 
 		if (write_req) {
-			usb_boost();
-
 			DBG(cdev, "rx %p %d\n", write_req, write_req->actual);
 			ret = vfs_write(filp, write_req->buf, write_req->actual,
 				&offset);
 			DBG(cdev, "vfs_write %d\n", ret);
 			if (ret != write_req->actual) {
-				usb_ep_dequeue(dev->ep_out, read_req);
 				r = -EIO;
 				dev->state = STATE_ERROR;
 				break;
@@ -943,11 +871,6 @@ static void receive_file_work(struct work_struct *data)
 			 */
 			if (count != 0xFFFFFFFF)
 				count -= read_req->actual;
-
-			total_size += read_req->actual;
-			DBG(cdev, "%s, line %d: count = %lld, total_sz = %lld, rd_req->actual = %d, rd_req->leng= %d\n",
-					__func__, __LINE__, count, total_size, read_req->actual, read_req->length);
-
 			if (read_req->actual < read_req->length) {
 				/*
 				 * short packet is used to signal EOF for
@@ -956,18 +879,10 @@ static void receive_file_work(struct work_struct *data)
 				DBG(cdev, "got short packet\n");
 				count = 0;
 			}
-			/* Add for RX mode 1 */
-			read_req->short_not_ok = 0;
 
 			write_req = read_req;
 			read_req = NULL;
 		}
-	}
-
-	if (dev->state == STATE_ERROR || dev->state == STATE_OFFLINE) {
-		DBG(dev->cdev, "%s, line %d: read_req = %p\n", __func__, __LINE__, read_req);
-		if (read_req)
-			read_req->short_not_ok = 0;
 	}
 
 	DBG(cdev, "receive_file_work returning %d\n", r);
@@ -1116,10 +1031,6 @@ static int mtp_open(struct inode *ip, struct file *fp)
 	if (mtp_lock(&_mtp_dev->open_excl))
 		return -EBUSY;
 
-	/* MTP QUEUE DEBUG */
-	active_pid = 0;
-	memset(active_comm, 0x0, sizeof(active_comm));
-
 	/* clear any error condition */
 	if (_mtp_dev->state != STATE_OFFLINE)
 		_mtp_dev->state = STATE_READY;
@@ -1142,9 +1053,6 @@ static const struct file_operations mtp_fops = {
 	.read = mtp_read,
 	.write = mtp_write,
 	.unlocked_ioctl = mtp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = mtp_ioctl,
-#endif
 	.open = mtp_open,
 	.release = mtp_release,
 };
@@ -1244,7 +1152,6 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 	/* respond with data transfer or status phase? */
 	if (value >= 0) {
 		int rc;
-
 		cdev->req->zero = value < w_length;
 		cdev->req->length = value;
 		rc = usb_ep_queue(cdev->gadget->ep0, cdev->req, GFP_ATOMIC);
@@ -1271,8 +1178,6 @@ mtp_function_bind(struct usb_configuration *c, struct usb_function *f)
 	if (id < 0)
 		return id;
 	mtp_interface_desc.bInterfaceNumber = id;
-
-	ptp_interface_desc.bInterfaceNumber = id;
 
 	if (mtp_string_defs[INTERFACE_STRING_INDEX].id == 0) {
 		ret = usb_string_id(c->cdev);
@@ -1407,7 +1312,7 @@ static void mtp_function_disable(struct usb_function *f)
 	VDBG(cdev, "%s disabled\n", dev->function.name);
 }
 
-static int mtp_bind_config(struct usb_configuration *c,
+static __maybe_unused int mtp_bind_config(struct usb_configuration *c,
 					  bool ptp_config)
 {
 	struct mtp_dev *dev = _mtp_dev;
@@ -1457,9 +1362,6 @@ static int __mtp_setup(struct mtp_instance *fi_mtp)
 	if (!dev)
 		return -ENOMEM;
 
-	/* MTP QUEUE DEBUG */
-	mutex_init(&mtp_read_mutex);
-
 	spin_lock_init(&dev->lock);
 	init_waitqueue_head(&dev->read_wq);
 	init_waitqueue_head(&dev->write_wq);
@@ -1494,7 +1396,7 @@ err1:
 	return ret;
 }
 
-static int mtp_setup(void)
+static __maybe_unused int mtp_setup(void)
 {
 	return __mtp_setup(NULL);
 }
