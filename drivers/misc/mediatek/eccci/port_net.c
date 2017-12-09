@@ -663,7 +663,6 @@ static int port_net_recv_skb(struct ccci_port *port, struct sk_buff *skb)
 {
 #ifdef CCMNI_U
 	struct ccci_header *ccci_h = (struct ccci_header *)skb->data;
-	int mbim_ccmni_current, mbim_ccmni_match = 0;
 #ifdef PORT_NET_TRACE
 	unsigned long long rx_cb_time;
 	unsigned long long total_time;
@@ -673,43 +672,6 @@ static int port_net_recv_skb(struct ccci_port *port, struct sk_buff *skb)
 	skb_pull(skb, sizeof(struct ccci_header));
 	CCCI_DEBUG_LOG(port->modem->index, NET, "[RX]: 0x%08X, 0x%08X, %08X, 0x%08X\n",
 		     ccci_h->data[0], ccci_h->data[1], ccci_h->channel, ccci_h->reserved);
-
-	mbim_ccmni_current = atomic_read(&mbim_ccmni_index[port->modem->index]);
-	if (mbim_ccmni_current != -1) {
-		switch (ccci_h->channel) {
-		case CCCI_CCMNI1_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 0 ? 1 : 0;
-			break;
-		case CCCI_CCMNI2_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 1 ? 1 : 0;
-			break;
-		case CCCI_CCMNI3_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 2 ? 1 : 0;
-			break;
-		case CCCI_CCMNI4_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 3 ? 1 : 0;
-			break;
-		case CCCI_CCMNI5_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 4 ? 1 : 0;
-			break;
-		case CCCI_CCMNI6_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 5 ? 1 : 0;
-			break;
-		case CCCI_CCMNI7_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 6 ? 1 : 0;
-			break;
-		case CCCI_CCMNI8_RX:
-			mbim_ccmni_match = mbim_ccmni_current == 7 ? 1 : 0;
-			break;
-		default:
-			mbim_ccmni_match = 0;
-			break;
-		};
-	}
-	if (mbim_ccmni_match) {
-		mbim_start_xmit(skb, mbim_ccmni_current);
-		return 0;
-	}
 
 #ifdef PORT_NET_TRACE
 	rx_cb_time = sched_clock();
