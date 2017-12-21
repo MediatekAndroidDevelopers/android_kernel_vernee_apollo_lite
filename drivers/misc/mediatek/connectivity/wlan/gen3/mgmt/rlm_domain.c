@@ -1163,9 +1163,9 @@ rlmDomainIsValidRfSetting(P_ADAPTER_T prAdapter,
 			  ENUM_CHNL_EXT_T eExtend,
 			  ENUM_CHANNEL_WIDTH_T eChannelWidth, UINT_8 ucChannelS1, UINT_8 ucChannelS2)
 {
-	UINT_8	ucCenterChannel;
-	UINT_8  ucUpperChannel;
-	UINT_8  ucLowerChannel;
+	UINT_8	ucCenterChannel = 0;
+	UINT_8  ucUpperChannel = 0;
+	UINT_8  ucLowerChannel = 0;
 	BOOLEAN fgValidChannel = TRUE;
 	BOOLEAN fgUpperChannel = TRUE;
 	BOOLEAN fgLowerChannel = TRUE;
